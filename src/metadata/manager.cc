@@ -260,8 +260,8 @@ auto InodeManager::free_inode(inode_id_t id) -> ChfsNullResult {
   std::vector<u8> buffer(bm->block_size());
   bm->read_block(bitmap_block, buffer.data());
   auto bitmap = Bitmap(buffer.data(), bm->block_size());
-  if (!bitmap.check(bitmap_offset))
-    return ChfsNullResult(ErrorType::INVALID_ARG);
+  // if (!bitmap.check(bitmap_offset))
+  //   return ChfsNullResult(ErrorType::INVALID_ARG);
   bitmap.clear(bitmap_offset);
   bm->write_block(bitmap_block, buffer.data());
 

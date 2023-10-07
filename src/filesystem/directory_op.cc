@@ -118,7 +118,11 @@ auto FileOperation::lookup(inode_id_t id, const char *name)
   std::list<DirectoryEntry> list;
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  read_directory(this, id, list);
+  for (auto &i : list)
+    if (i.name.compare(name) == 0)
+      return ChfsResult<inode_id_t>(i.id);
 
   return ChfsResult<inode_id_t>(ErrorType::NotExist);
 }
@@ -132,9 +136,26 @@ auto FileOperation::mk_helper(inode_id_t id, const char *name, InodeType type)
   //    If already exist, return ErrorType::AlreadyExist.
   // 2. Create the new inode.
   // 3. Append the new entry to the parent directory.
-  UNIMPLEMENTED();
 
-  return ChfsResult<inode_id_t>(static_cast<inode_id_t>(0));
+  std::list<DirectoryEntry> list;
+  read_directory(this, id, list);
+  for (auto &i : list)
+    if (i.name.compare(name) == 0)
+      return ChfsResult<inode_id_t>(ErrorType::AlreadyExist);
+  auto allo_inode_res = alloc_inode(type);
+  if (allo_inode_res.is_err())
+    return ChfsResult<inode_id_t>(allo_inode_res.unwrap_error());
+
+  auto read_res = read_file(id);
+  if (read_res.is_err())
+    return ChfsResult<inode_id_t>(read_res.unwrap_error());
+  auto buffer = read_res.unwrap();
+  auto src = std::string(buffer.begin(), buffer.end());
+  src = append_to_directory(src, std::string(name), allo_inode_res.unwrap());
+  buffer = std::vector<u8>(src.begin(), src.end());
+  write_file(id, buffer);
+
+  return allo_inode_res;
 }
 
 // {Your code here}
@@ -144,7 +165,38 @@ auto FileOperation::unlink(inode_id_t parent, const char *name)
   // TODO: 
   // 1. Remove the file, you can use the function `remove_file`
   // 2. Remove the entry from the directory.
-  UNIMPLEMENTED();
+  
+  std::list<DirectoryEntry> list;
+  read_directory(this, parent, list);
+  inode_id_t id = KInvalidInodeID;
+  for (auto &i : list)
+    if (i.name.compare(name) == 0)
+      id = i.id;
+  if (id == KInvalidInodeID)
+    return ChfsNullResult(ErrorType::NotExist);
+  
+  //change parent time
+  std::vector<u8> inode(block_manager_->block_size());
+  auto inode_p = reinterpret_cast<Inode *>(inode.data());
+  auto ino_res = inode_manager_->read_inode(parent, inode);
+  if (ino_res.is_err())
+    return ChfsNullResult(ino_res.unwrap_error());
+  inode_p->inner_attr.set_all_time(time(0));
+  block_manager_->write_block(ino_res.unwrap(), inode.data());
+
+  auto rm_res = remove_file(id);
+  if (rm_res.is_err())
+    return ChfsNullResult(rm_res.unwrap_error());
+  
+  auto read_res = read_file(parent);
+  if (read_res.is_err())
+    return ChfsNullResult(read_res.unwrap_error());
+  auto buffer = read_res.unwrap();
+  auto src = std::string(buffer.begin(), buffer.end());
+  src = rm_from_directory(src, std::string(name));
+  buffer = std::vector<u8>(src.begin(), src.end());
+  // write_file_w_off(parent, src.data(), src.size(), 0);
+  write_file(parent, buffer);
   
   return KNullOk;
 }
