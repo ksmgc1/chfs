@@ -42,7 +42,10 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 
   // TODO: Implement this function.
   //       Append the new directory entry to `src`.
-  UNIMPLEMENTED();
+
+  if (!src.empty() && *(src.end() - 1) != '/')
+    src.append("/");
+  src += filename + ':' + inode_id_to_string(id);
   
   return src;
 }
@@ -51,8 +54,25 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 void parse_directory(std::string &src, std::list<DirectoryEntry> &list) {
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
 
+  std::list<DirectoryEntry> res;
+  auto p2 = 0;
+  if (!src.empty() && *(src.end() - 1) != '/')
+    src.append("/");
+  auto size = src.size();
+  for (auto p1 = 0; p1 < size; ++p1) {
+    p2 = src.find('/', p1);
+    if (p2 < size) {
+      auto entry_str = src.substr(p1, p2 - p1);
+      auto p = entry_str.find(':');
+      DirectoryEntry entry;
+      entry.name = entry_str.substr(0, p);
+      auto id_str = entry_str.substr(p + 1);
+      entry.id = string_to_inode_id(id_str);
+      list.push_back(entry);
+      p1 = p2;
+    } else break;
+  }
 }
 
 // {Your code here}
@@ -62,7 +82,14 @@ auto rm_from_directory(std::string src, std::string filename) -> std::string {
 
   // TODO: Implement this function.
   //       Remove the directory entry from `src`.
-  UNIMPLEMENTED();
+  
+  std::list<DirectoryEntry> list;
+  parse_directory(src, list);
+  for (auto &i : list) {
+    if (i.name == filename)
+      continue;
+    res = append_to_directory(res, i.name, i.id);
+  }
 
   return res;
 }
@@ -74,7 +101,13 @@ auto read_directory(FileOperation *fs, inode_id_t id,
                     std::list<DirectoryEntry> &list) -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  auto res = fs->read_file(id);
+  if (res.is_err())
+    return ChfsNullResult(res.unwrap_error());
+  auto res_vec = res.unwrap();
+  auto src = std::string(res_vec.begin(), res_vec.end());
+  parse_directory(src, list);
 
   return KNullOk;
 }
