@@ -195,7 +195,6 @@ auto FileOperation::unlink(inode_id_t parent, const char *name)
   auto src = std::string(buffer.begin(), buffer.end());
   src = rm_from_directory(src, std::string(name));
   buffer = std::vector<u8>(src.begin(), src.end());
-  // write_file_w_off(parent, src.data(), src.size(), 0);
   write_file(parent, buffer);
   
   return KNullOk;
