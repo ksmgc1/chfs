@@ -95,8 +95,12 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
   
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
   this->write_fail_cnt++;
+  if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offset = block_id * block_sz;
+  memcpy(&block_data[offset], data, block_sz);
+
   return KNullOk;
 }
 
@@ -111,23 +115,32 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
   }
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
   this->write_fail_cnt++;
+  
+  if (block_id >= block_cnt || offset >= block_sz || len >= block_sz - offset)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offs = block_id * block_sz + offset;
+  memcpy(&block_data[offs], data, len);
+
   return KNullOk;
 }
 
 auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
 
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+  if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offset = block_id * block_sz;
+  memcpy(data, &block_data[offset], block_sz);
 
   return KNullOk;
 }
 
 auto BlockManager::zero_block(block_id_t block_id) -> ChfsNullResult {
   
-  // TODO: Implement this function.
-  UNIMPLEMENTED();
+  if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offset = block_id * block_sz;
+  memset(&block_data[offset], 0, block_sz);
 
   return KNullOk;
 }
