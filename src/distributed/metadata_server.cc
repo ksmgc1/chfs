@@ -123,7 +123,16 @@ MetadataServer::MetadataServer(std::string const &address, u16 port,
 auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+
+  if (type == DirectoryType) {
+    auto res = operation_->mkdir(parent, name.c_str());
+    if (res.is_ok())
+      return res.unwrap();
+  } else if (type == RegularFileType) {
+    auto res = operation_->mkfile(parent, name.c_str());
+    if (res.is_ok())
+      return res.unwrap();
+  }
 
   return 0;
 }
@@ -132,7 +141,10 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
 auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  auto res = operation_->unlink(parent, name.c_str());
+  if (res.is_ok())
+    return true;
 
   return false;
 }
@@ -141,7 +153,10 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
 auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+
+  auto res = operation_->lookup(parent, name.c_str());
+  if (res.is_ok())
+    return res.unwrap();
 
   return 0;
 }
@@ -150,6 +165,8 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
 auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   // TODO: Implement this function.
   UNIMPLEMENTED();
+
+  mac_id_t
 
   return {};
 }
