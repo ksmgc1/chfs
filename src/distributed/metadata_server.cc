@@ -164,11 +164,23 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
 // {Your code here}
 auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
 
-  mac_id_t
+  auto res = operation_->read_file(id);
+  if (res.is_err())
+    return {};
+  auto inode_data = res.unwrap();
+  auto inode_p = reinterpret_cast<Inode *>(inode_data.data());
+  auto file_sz = inode_p->get_size();
+  auto block_sz = operation_->block_manager_->block_size();
+  auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
 
-  return {};
+  // is this SHIT?
+  auto block_mac_ids = reinterpret_cast<std::pair<block_id_t, mac_id_t> *>(inode_p->blocks);
+  std::vector<BlockInfo> info;
+  for (auto i = 0; i < block_num; ++i)
+    info.emplace_back(block_mac_ids[i].first, block_mac_ids[i].second, 0);
+
+  return info;
 }
 
 // {Your code here}

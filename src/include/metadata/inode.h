@@ -90,7 +90,7 @@ class Inode {
   // which is dynamically calculated based on the block size
 public:
   [[maybe_unused]] block_id_t blocks[0];
-  [[maybe_unused]] std::pair<block_id_t, mac_id_t> block_and_mac_ids[0]; // this is SHIT
+  // [[maybe_unused]] std::pair<block_id_t, mac_id_t> block_and_mac_ids[0]; // this is SHIT
 
 public:
   /**
