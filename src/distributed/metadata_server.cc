@@ -186,34 +186,60 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
 // {Your code here}
 auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
 
-  return {};
+  auto mac_id = generator.rand(1, num_data_servers);
+  auto machine = clients_[mac_id];
+  auto call_res = machine->call("alloc_block");
+  if (call_res.is_err())
+    return {};
+  auto res = call_res.unwrap()->as<std::pair<block_id_t, version_t>>();
+
+  return {res.first, mac_id, res.second};
 }
 
 // {Your code here}
 auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
                                 mac_id_t machine_id) -> bool {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
-
-  return false;
+  
+  if (machine_id <= 0 || machine_id > num_data_servers)
+    return false;
+  auto machine = clients_[machine_id];
+  auto call_res = machine->call("free_block", block_id);
+  if (call_res.is_err())
+    return false;
+  auto res = call_res.unwrap()->as<bool>();
+  return res;
 }
 
 // {Your code here}
 auto MetadataServer::readdir(inode_id_t node)
     -> std::vector<std::pair<std::string, inode_id_t>> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  auto list = std::list<DirectoryEntry>();
+  auto res = read_directory(operation_.get(), node, list);
+  if (res.is_err())
+    return {};
+  auto vec = std::vector<std::pair<std::string, inode_id_t>>();
+  for (auto &i : list)
+    vec.emplace_back(i.name, i.id);
 
-  return {};
+  return vec;
 }
 
 // {Your code here}
 auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+
+  auto type_res = operation_->gettype(id);
+  auto attr_res = operation_->getattr(id);
+  if (type_res.is_ok() && attr_res.is_ok()) {
+    auto type = type_res.unwrap();
+    auto attr = attr_res.unwrap();
+    return {attr.size, attr.atime, attr.mtime, attr.ctime, type == InodeType::FILE ? RegularFileType : DirectoryType};
+  }
 
   return {};
 }
