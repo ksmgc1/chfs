@@ -181,7 +181,7 @@ auto FileOperation::unlink(inode_id_t parent, const char *name)
   auto ino_res = inode_manager_->read_inode(parent, inode);
   if (ino_res.is_err())
     return ChfsNullResult(ino_res.unwrap_error());
-  inode_p->inner_attr.set_all_time(time(0));
+  inode_p->inner_attr.set_mtime(time(0));
   block_manager_->write_block(ino_res.unwrap(), inode.data());
 
   auto rm_res = remove_file(id);

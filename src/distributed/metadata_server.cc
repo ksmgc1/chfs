@@ -142,11 +142,42 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
   
-  auto res = operation_->unlink(parent, name.c_str());
-  if (res.is_ok())
-    return true;
+  std::list<DirectoryEntry> list;
+  read_directory(operation_.get(), parent, list);
+  inode_id_t id = KInvalidInodeID;
+  for (auto &i : list)
+    if (i.name.compare(name) == 0)
+      id = i.id;
+  if (id == KInvalidInodeID)
+    return false;
+  
+  //change parent time
+  std::vector<u8> inode(operation_->block_manager_->block_size());
+  auto inode_p = reinterpret_cast<Inode *>(inode.data());
+  auto ino_bid = operation_->inode_manager_->get(id);
+  if (ino_bid.is_err())
+    return false;
+  operation_->block_manager_->read_block(ino_bid.unwrap(), inode.data());
+  inode_p->inner_attr.set_mtime(time(0));
+  operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 
-  return false;
+  auto block_mac_ids = reinterpret_cast<std::pair<block_id_t, mac_id_t> *>(inode_p->blocks);
+  auto num_entry = inode_p->get_size() / sizeof(std::pair<block_id_t, mac_id_t>);
+  for (auto i = 0; i < num_entry; ++i) {
+    auto entry = block_mac_ids[i];
+    clients_[entry.second]->async_call("free_block", entry.first);
+  }
+  
+  auto read_res = operation_->read_file(parent);
+  if (read_res.is_err())
+    return false;
+  auto buffer = read_res.unwrap();
+  auto src = std::string(buffer.begin(), buffer.end());
+  src = rm_from_directory(src, std::string(name));
+  buffer = std::vector<u8>(src.begin(), src.end());
+  operation_->write_file(parent, buffer);
+  
+  return true;
 }
 
 // {Your code here}
@@ -165,10 +196,11 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
 auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   // TODO: Implement this function.
 
-  auto res = operation_->read_file(id);
-  if (res.is_err())
+  auto bid_res = operation_->inode_manager_->get(id);
+  if (bid_res.is_err())
     return {};
-  auto inode_data = res.unwrap();
+  auto inode_data = std::vector<u8>();
+  auto res = operation_->block_manager_->read_block(bid_res.unwrap(), inode_data.data());
   auto inode_p = reinterpret_cast<Inode *>(inode_data.data());
   auto file_sz = inode_p->get_size();
   auto block_sz = operation_->block_manager_->block_size();
@@ -233,12 +265,10 @@ auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
   // TODO: Implement this function.
 
-  auto type_res = operation_->gettype(id);
-  auto attr_res = operation_->getattr(id);
-  if (type_res.is_ok() && attr_res.is_ok()) {
-    auto type = type_res.unwrap();
-    auto attr = attr_res.unwrap();
-    return {attr.size, attr.atime, attr.mtime, attr.ctime, type == InodeType::FILE ? RegularFileType : DirectoryType};
+  auto res = operation_->get_type_attr(id);
+  if (res.is_ok()) {
+    auto type_attr = res.unwrap();
+    return {type_attr.second.size, type_attr.second.atime, type_attr.second.mtime, type_attr.second.ctime, type_attr.first == InodeType::FILE ? RegularFileType : DirectoryType};
   }
 
   return {};
