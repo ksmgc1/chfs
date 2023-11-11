@@ -151,7 +151,7 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
   if (id == KInvalidInodeID)
     return false;
   
-  std::vector<u8> inode(operation_->block_manager_->block_size());
+  std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
   auto ino_bid = operation_->inode_manager_->get(id);
   if (ino_bid.is_err())
@@ -162,13 +162,13 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
   operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 
   if (inode_p->get_type() == InodeType::FILE) {
-    auto block_mac_ids = reinterpret_cast<std::pair<block_id_t, mac_id_t> *>(inode_p->blocks);
+    auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
     auto file_sz = inode_p->get_size();
-    auto block_sz = operation_->block_manager_->block_size();
+    auto block_sz = DiskBlockSize;
     auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
     for (auto i = 0; i < block_num; ++i) {
       auto entry = block_mac_ids[i];
-      clients_[entry.second]->async_call("free_block", entry.first);
+      clients_[std::get<1>(entry)]->async_call("free_block", std::get<0>(entry));
     }
   } else {
     std::cout << "unlink dir" << std::endl << std::endl;
@@ -207,18 +207,18 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   auto bid_res = operation_->inode_manager_->get(id);
   if (bid_res.is_err())
     return {};
-  auto inode_data = std::vector<u8>(operation_->block_manager_->block_size());
+  auto inode_data = std::vector<u8>(DiskBlockSize);
   operation_->block_manager_->read_block(bid_res.unwrap(), inode_data.data());
   auto inode_p = reinterpret_cast<Inode *>(inode_data.data());
   auto file_sz = inode_p->get_size();
-  auto block_sz = operation_->block_manager_->block_size();
+  auto block_sz = DiskBlockSize;
   auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
 
   // is this SHIT?
-  auto block_mac_ids = reinterpret_cast<std::pair<block_id_t, mac_id_t> *>(inode_p->blocks);
+  auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
   std::vector<BlockInfo> info;
   for (auto i = 0; i < block_num; ++i)
-    info.emplace_back(block_mac_ids[i].first, block_mac_ids[i].second, 0);
+    info.emplace_back(std::get<0>(block_mac_ids[i]), std::get<1>(block_mac_ids[i]), std::get<2>(block_mac_ids[i]));
 
   return info;
 }
@@ -227,15 +227,15 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
 auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   // TODO: Implement this function.
 
-  std::vector<u8> inode(operation_->block_manager_->block_size());
+  std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
   auto ino_bid = operation_->inode_manager_->get(id);
   operation_->block_manager_->read_block(ino_bid.unwrap(), inode.data());
-  auto block_mac_ids = reinterpret_cast<std::pair<block_id_t, mac_id_t> *>(inode_p->blocks);
+  auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
   auto file_sz = inode_p->get_size();
-  auto block_sz = operation_->block_manager_->block_size();
+  auto block_sz = DiskBlockSize;
   auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
-  auto max_block_num = (block_sz - sizeof(Inode)) / sizeof(std::pair<block_id_t, mac_id_t>);
+  auto max_block_num = (block_sz - sizeof(Inode)) / sizeof(std::tuple<block_id_t, mac_id_t, version_t>);
   if (max_block_num < block_num + 1)
     return {};
 
@@ -246,7 +246,7 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
     return {};
   auto res = call_res.unwrap()->as<std::pair<block_id_t, version_t>>();
 
-  block_mac_ids[block_num] = {res.first, mac_id};
+  block_mac_ids[block_num] = {res.first, mac_id, res.second};
   inode_p->inner_attr.size += block_sz;
   operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 

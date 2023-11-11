@@ -19,8 +19,17 @@ auto DataServer::initialize(std::string const &data_path) {
         std::make_shared<BlockAllocator>(bm, 0, false);
   } else {
     // We need to reserve some blocks for storing the version of each block
+
+    auto blk_sz = bm->block_size();
+    auto versions_per_blk = blk_sz / sizeof(version_t);
+    auto total_blks = bm->total_blocks();
+    auto version_block_num = total_blks % versions_per_blk ? total_blks / versions_per_blk + 1 : total_blks / versions_per_blk;
+    for (auto i = 0; i < version_block_num; ++i)
+      bm->zero_block(i);
+
     block_allocator_ = std::shared_ptr<BlockAllocator>(
-        new BlockAllocator(bm, 0, true));
+        new BlockAllocator(bm, version_block_num, true));
+
   }
 
   // Initialize the RPC server and bind all handlers
@@ -54,12 +63,40 @@ DataServer::DataServer(std::string const &address, u16 port,
 
 DataServer::~DataServer() { server_.reset(); }
 
+// added a helper function to get/increase the version of a block
+inline auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+  auto blk_sz = bm->block_size();
+  auto versions_per_blk = blk_sz / sizeof(version_t);
+  auto version_blk_id = block_id / versions_per_blk;
+  auto version_blk_offs = block_id % versions_per_blk;
+  std::vector<u8> version_blk(bm->block_size());
+  bm->read_block(version_blk_id, version_blk.data());
+  auto version_p = reinterpret_cast<version_t *>(version_blk.data());
+  return version_p[version_blk_offs];
+}
+
+inline auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+  auto blk_sz = bm->block_size();
+  auto versions_per_blk = blk_sz / sizeof(version_t);
+  auto version_blk_id = block_id / versions_per_blk;
+  auto version_blk_offs = block_id % versions_per_blk;
+  std::vector<u8> version_blk(bm->block_size());
+  bm->read_block(version_blk_id, version_blk.data());
+  auto version_p = reinterpret_cast<version_t *>(version_blk.data());
+  version_p[version_blk_offs] = version_p[version_blk_offs] + 1;
+  bm->write_block(version_blk_id, version_blk.data());
+  return version_p[version_blk_offs];
+}
+
 // {Your code here}
 auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
 
-  // ?? no conception of version
+  auto act_version = get_version(block_allocator_->bm, block_id);
+  if (act_version != version)
+    return {};
+
   const auto block_sz = block_allocator_->bm->block_size();
   if (offset + len > block_sz)
     return {};
@@ -86,8 +123,10 @@ auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   // TODO: Implement this function.
   
   auto res = block_allocator_->allocate();
-  if (res.is_ok())
-    return {res.unwrap(), 1};
+  if (res.is_ok()) {
+    auto version = increase_version(block_allocator_->bm, res.unwrap());
+    return {res.unwrap(), version};
+  }
   
   return {};
 }
@@ -97,8 +136,10 @@ auto DataServer::free_block(block_id_t block_id) -> bool {
   // TODO: Implement this function.
   
   auto res = block_allocator_->deallocate(block_id);
-  if (res.is_ok())
+  if (res.is_ok()) {
+    increase_version(block_allocator_->bm, block_id);
     return true;
+  } 
 
   return false;
 }
