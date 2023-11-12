@@ -30,6 +30,9 @@ auto DataServer::initialize(std::string const &data_path) {
     block_allocator_ = std::shared_ptr<BlockAllocator>(
         new BlockAllocator(bm, version_block_num, true));
 
+    // init mutex
+    block_mutex_.clear();
+
   }
 
   // Initialize the RPC server and bind all handlers
@@ -93,6 +96,9 @@ auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
 
+  // acuqire read lock
+  std::shared_lock<std::shared_mutex> lock(*block_mutex_[block_id]);
+
   auto act_version = get_version(block_allocator_->bm, block_id);
   if (act_version != version)
     return {};
@@ -111,6 +117,9 @@ auto DataServer::write_data(block_id_t block_id, usize offset,
                             std::vector<u8> &buffer) -> bool {
   // TODO: Implement this function.
 
+  // acquire write lock
+  std::unique_lock<std::shared_mutex> lock(*block_mutex_[block_id]);
+
   auto res = block_allocator_->bm->write_partial_block(block_id, buffer.data(), offset, buffer.size());  
 
   if (res.is_ok())
@@ -122,9 +131,14 @@ auto DataServer::write_data(block_id_t block_id, usize offset,
 auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   // TODO: Implement this function.
   
+  // acquire allocator mutex
+  std::lock_guard<std::mutex> lock(allocator_mutex_);
+
   auto res = block_allocator_->allocate();
   if (res.is_ok()) {
     auto version = increase_version(block_allocator_->bm, res.unwrap());
+    // insert mutex
+    block_mutex_.emplace(res.unwrap(), std::make_shared<std::shared_mutex>());
     return {res.unwrap(), version};
   }
   
@@ -138,6 +152,8 @@ auto DataServer::free_block(block_id_t block_id) -> bool {
   auto res = block_allocator_->deallocate(block_id);
   if (res.is_ok()) {
     increase_version(block_allocator_->bm, block_id);
+    // remove mutex
+    block_mutex_.erase(block_id);
     return true;
   } 
 

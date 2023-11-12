@@ -260,12 +260,38 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   
   if (machine_id <= 0 || machine_id > num_data_servers)
     return false;
+  
+  std::vector<u8> inode(DiskBlockSize);
+  auto inode_p = reinterpret_cast<Inode *>(inode.data());
+  auto ino_bid = operation_->inode_manager_->get(id);
+  operation_->block_manager_->read_block(ino_bid.unwrap(), inode.data());
+  auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
+  auto file_sz = inode_p->get_size();
+  auto block_sz = DiskBlockSize;
+  auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
+  std::tuple<block_id_t, mac_id_t, version_t> *ptr = nullptr;
+  for (auto i = 0; i < block_num; ++i)
+    if (std::get<0>(block_mac_ids[i]) == block_id && std::get<1>(block_mac_ids[i]) == machine_id) {
+      ptr = &block_mac_ids[i];
+      break;
+    }
+  
+  if (ptr == nullptr)
+    return false;
+
   auto machine = clients_[machine_id];
   auto call_res = machine->call("free_block", block_id);
   if (call_res.is_err())
     return false;
   auto res = call_res.unwrap()->as<bool>();
-  return res;
+  if (!res)
+    return false;
+
+  *ptr = {KInvalidBlockID, 0, 0};
+  inode_p->inner_attr.size -= block_sz;
+  operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
+
+  return true;
 }
 
 // {Your code here}
