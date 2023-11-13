@@ -121,7 +121,7 @@ private:
   std::unique_ptr<RpcServer> server_;
   std::shared_ptr<BlockAllocator> block_allocator_;
 
-  std::map<block_id_t, std::shared_ptr<std::shared_mutex>> block_mutex_;
+  std::unique_ptr<std::vector<std::shared_mutex>> block_mutex_;
   std::mutex allocator_mutex_;
 };
 

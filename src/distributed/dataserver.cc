@@ -15,8 +15,16 @@ auto DataServer::initialize(std::string const &data_path) {
   auto bm = std::shared_ptr<BlockManager>(
       new BlockManager(data_path, KDefaultBlockCnt));
   if (is_initialized) {
+    auto blk_sz = bm->block_size();
+    auto versions_per_blk = blk_sz / sizeof(version_t);
+    auto total_blks = bm->total_blocks();
+    auto version_block_num = total_blks % versions_per_blk ? total_blks / versions_per_blk + 1 : total_blks / versions_per_blk;
+    
     block_allocator_ =
-        std::make_shared<BlockAllocator>(bm, 0, false);
+        std::make_shared<BlockAllocator>(bm, version_block_num, false);
+
+    // init mutex
+    block_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_blks);
   } else {
     // We need to reserve some blocks for storing the version of each block
 
@@ -31,7 +39,7 @@ auto DataServer::initialize(std::string const &data_path) {
         new BlockAllocator(bm, version_block_num, true));
 
     // init mutex
-    block_mutex_.clear();
+    block_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_blks);
 
   }
 
@@ -97,7 +105,8 @@ auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
   // TODO: Implement this function.
 
   // acuqire read lock
-  std::shared_lock<std::shared_mutex> lock(*block_mutex_[block_id]);
+  if (block_id < block_mutex_->size())
+    std::shared_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
 
   auto act_version = get_version(block_allocator_->bm, block_id);
   if (act_version != version)
@@ -118,7 +127,8 @@ auto DataServer::write_data(block_id_t block_id, usize offset,
   // TODO: Implement this function.
 
   // acquire write lock
-  std::unique_lock<std::shared_mutex> lock(*block_mutex_[block_id]);
+  if (block_id < block_mutex_->size())
+    std::unique_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
 
   auto res = block_allocator_->bm->write_partial_block(block_id, buffer.data(), offset, buffer.size());  
 
@@ -137,8 +147,6 @@ auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   auto res = block_allocator_->allocate();
   if (res.is_ok()) {
     auto version = increase_version(block_allocator_->bm, res.unwrap());
-    // insert mutex
-    block_mutex_.emplace(res.unwrap(), std::make_shared<std::shared_mutex>());
     return {res.unwrap(), version};
   }
   
@@ -152,8 +160,6 @@ auto DataServer::free_block(block_id_t block_id) -> bool {
   auto res = block_allocator_->deallocate(block_id);
   if (res.is_ok()) {
     increase_version(block_allocator_->bm, block_id);
-    // remove mutex
-    block_mutex_.erase(block_id);
     return true;
   } 
 
