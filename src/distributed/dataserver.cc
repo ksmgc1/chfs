@@ -105,8 +105,9 @@ auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
   // TODO: Implement this function.
 
   // acuqire read lock
-  if (block_id < block_mutex_->size())
-    std::shared_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
+  if (block_id >= block_mutex_->size())
+    return {};
+  std::shared_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
 
   auto act_version = get_version(block_allocator_->bm, block_id);
   if (act_version != version)
@@ -127,8 +128,9 @@ auto DataServer::write_data(block_id_t block_id, usize offset,
   // TODO: Implement this function.
 
   // acquire write lock
-  if (block_id < block_mutex_->size())
-    std::unique_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
+  if (block_id >= block_mutex_->size())
+    return false;
+  std::unique_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
 
   auto res = block_allocator_->bm->write_partial_block(block_id, buffer.data(), offset, buffer.size());  
 
@@ -157,12 +159,16 @@ auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
 auto DataServer::free_block(block_id_t block_id) -> bool {
   // TODO: Implement this function.
   
+  // acquire allocator mutex and block mutex
+  if (block_id >= block_mutex_->size())
+    return false;
+  std::lock_guard<std::mutex> lock(allocator_mutex_);
+
   auto res = block_allocator_->deallocate(block_id);
   if (res.is_ok()) {
     increase_version(block_allocator_->bm, block_id);
     return true;
   } 
-
   return false;
 }
 } // namespace chfs

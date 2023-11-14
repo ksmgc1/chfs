@@ -99,6 +99,11 @@ MetadataServer::MetadataServer(u16 port, const std::string &data_path,
       is_checkpoint_enabled_(is_checkpoint_enabled) {
   server_ = std::make_unique<RpcServer>(port);
   init_fs(data_path);
+
+  // init mutex
+  auto total_inode_num = operation_->inode_manager_->get_max_inode_supported();
+  inode_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_inode_num + 1);
+
   if (is_log_enabled_) {
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled);
@@ -113,6 +118,11 @@ MetadataServer::MetadataServer(std::string const &address, u16 port,
       is_checkpoint_enabled_(is_checkpoint_enabled) {
   server_ = std::make_unique<RpcServer>(address, port);
   init_fs(data_path);
+
+  // init mutex
+  auto total_inode_num = operation_->inode_manager_->get_max_inode_supported();
+  inode_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_inode_num + 1);
+
   if (is_log_enabled_) {
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled);
@@ -123,6 +133,8 @@ MetadataServer::MetadataServer(std::string const &address, u16 port,
 auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
+
+  std::lock_guard<std::mutex> lock(allocator_mutex);
 
   if (type == DirectoryType) {
     auto res = operation_->mkdir(parent, name.c_str());
@@ -142,6 +154,11 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
   
+  // acquire parent lock
+  if (inode_mutex_->size() <= parent)
+    return false;
+  std::shared_lock<std::shared_mutex> p_lock((*inode_mutex_)[parent]);
+
   std::list<DirectoryEntry> list;
   read_directory(operation_.get(), parent, list);
   inode_id_t id = KInvalidInodeID;
@@ -150,6 +167,9 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
       id = i.id;
   if (id == KInvalidInodeID)
     return false;
+
+  p_lock.unlock();
+  std::unique_lock<std::shared_mutex> p_w_lock((*inode_mutex_)[parent]);
   
   std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
@@ -161,6 +181,11 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
   inode_p->inner_attr.set_mtime(time(0));
   operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 
+  // acquire
+  if (inode_mutex_->size() > id)
+    std::unique_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
+  std::lock_guard<std::mutex> allo_lock(allocator_mutex);
+
   if (inode_p->get_type() == InodeType::FILE) {
     auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
     auto file_sz = inode_p->get_size();
@@ -170,11 +195,9 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
       auto entry = block_mac_ids[i];
       clients_[std::get<1>(entry)]->async_call("free_block", std::get<0>(entry));
     }
-  } else {
-    std::cout << "unlink dir" << std::endl << std::endl;
-    auto res = operation_->remove_file(id);
-    std::cout << (res.is_err()) << std::endl;
-  }
+    operation_->inode_manager_->free_inode(id);
+  } else
+    operation_->remove_file(id);
 
   auto read_res = operation_->read_file(parent);
     if (read_res.is_err())
@@ -193,6 +216,11 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
 
+  // acquire parent lock
+  if (inode_mutex_->size() <= parent)
+    return 0;
+  std::shared_lock<std::shared_mutex> p_lock((*inode_mutex_)[parent]);
+
   auto res = operation_->lookup(parent, name.c_str());
   if (res.is_ok())
     return res.unwrap();
@@ -203,6 +231,11 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
 // {Your code here}
 auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   // TODO: Implement this function.
+
+  // acquire lock
+  if (inode_mutex_->size() <= id)
+    return {};
+  std::shared_lock<std::shared_mutex> p_lock((*inode_mutex_)[id]);
 
   auto bid_res = operation_->inode_manager_->get(id);
   if (bid_res.is_err())
@@ -226,6 +259,11 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
 // {Your code here}
 auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   // TODO: Implement this function.
+
+  // acquire lock
+  if (inode_mutex_->size() <= id)
+    return {};
+  std::unique_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
 
   std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
@@ -256,10 +294,17 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
 // {Your code here}
 auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
                                 mac_id_t machine_id) -> bool {
-  // TODO: Implement this function.
+  // TODO: Implement this function. 
+
+  // std::cout << "freeing mac " << machine_id << " block " << block_id << std::endl;
   
   if (machine_id <= 0 || machine_id > num_data_servers)
     return false;
+
+  // acquire lock
+  if (inode_mutex_->size() <= id)
+    return false;
+  std::unique_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
   
   std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
@@ -270,13 +315,15 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   auto block_sz = DiskBlockSize;
   auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
   std::tuple<block_id_t, mac_id_t, version_t> *ptr = nullptr;
+  auto index = -1;
   for (auto i = 0; i < block_num; ++i)
     if (std::get<0>(block_mac_ids[i]) == block_id && std::get<1>(block_mac_ids[i]) == machine_id) {
       ptr = &block_mac_ids[i];
+      index = i;
       break;
     }
   
-  if (ptr == nullptr)
+  if (index == -1)
     return false;
 
   auto machine = clients_[machine_id];
@@ -284,10 +331,14 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   if (call_res.is_err())
     return false;
   auto res = call_res.unwrap()->as<bool>();
+  // std::cout << "mac id " << machine_id << " free block " << block_id << " res: " << res << std::endl;
   if (!res)
     return false;
 
   *ptr = {KInvalidBlockID, 0, 0};
+  for (auto i = index; i < block_num - 1; ++i)
+    block_mac_ids[i] = block_mac_ids[i + 1];
+  block_mac_ids[block_num - 1] = {KInvalidBlockID, 0, 0};
   inode_p->inner_attr.size -= block_sz;
   operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 
@@ -298,6 +349,11 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
 auto MetadataServer::readdir(inode_id_t node)
     -> std::vector<std::pair<std::string, inode_id_t>> {
   // TODO: Implement this function.
+
+  // acquire lock
+  if (inode_mutex_->size() <= node)
+    return {};
+  std::shared_lock<std::shared_mutex> lock((*inode_mutex_)[node]);
   
   auto list = std::list<DirectoryEntry>();
   auto res = read_directory(operation_.get(), node, list);
@@ -314,6 +370,11 @@ auto MetadataServer::readdir(inode_id_t node)
 auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
   // TODO: Implement this function.
+
+  // acquire lock
+  if (inode_mutex_->size() <= id)
+    return {};
+  std::shared_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
 
   auto res = operation_->get_type_attr(id);
   if (res.is_ok()) {

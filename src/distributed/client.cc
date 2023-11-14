@@ -35,17 +35,29 @@ auto ChfsClient::mknode(FileType type, inode_id_t parent,
   if (res.is_err())
     return ChfsResult<inode_id_t>(res.unwrap_error());
 
-  return ChfsResult<inode_id_t>(res.unwrap()->as<inode_id_t>());
+  auto id = res.unwrap()->as<inode_id_t>();
+  if (id == 0)
+    return ErrorType::AlreadyExist;
+
+  return ChfsResult<inode_id_t>(id);
 }
 
 // {Your code here}
 auto ChfsClient::unlink(inode_id_t parent, std::string const &name)
     -> ChfsNullResult {
   // TODO: Implement this function.
+
+  auto look_res = lookup(parent, name);
+  if (look_res.is_err())
+    return look_res.unwrap_error();
   
   auto res = metadata_server_->call("unlink", parent, name);
   if (res.is_err())
     return ChfsNullResult(res.unwrap_error());
+
+  auto succ = res.unwrap()->as<bool>();
+  if (!succ)
+    return ErrorType::NotEmpty;
 
   return KNullOk;
 }
@@ -59,7 +71,11 @@ auto ChfsClient::lookup(inode_id_t parent, const std::string &name)
   if (res.is_err())
     return ChfsResult<inode_id_t>(res.unwrap_error());
 
-  return ChfsResult<inode_id_t>(res.unwrap()->as<inode_id_t>());
+  auto id = res.unwrap()->as<inode_id_t>();
+  if (id == 0)
+    return ErrorType::NotExist;
+
+  return ChfsResult<inode_id_t>(id);
 }
 
 // {Your code here}
@@ -69,9 +85,9 @@ auto ChfsClient::readdir(inode_id_t id)
   
   auto res = metadata_server_->call("readdir", id);
   if (res.is_err())
-    return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(res.unwrap_error());
+    return res.unwrap_error();
 
-  return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(res.unwrap()->as<std::vector<std::pair<std::string, inode_id_t>>>());
+  return res.unwrap()->as<std::vector<std::pair<std::string, inode_id_t>>>();
 }
 
 // {Your code here}
@@ -84,6 +100,9 @@ auto ChfsClient::get_type_attr(inode_id_t id)
     return ChfsResult<std::pair<InodeType, FileAttr>>(res.unwrap_error());
 
   auto tup = res.unwrap()->as<std::tuple<u64, u64, u64, u64, u8>>();
+  if (std::get<4>(tup) == 0)
+    return ErrorType::NotExist;
+
   FileAttr attr;
   attr.size = std::get<0>(tup);
   attr.atime = std::get<1>(tup);

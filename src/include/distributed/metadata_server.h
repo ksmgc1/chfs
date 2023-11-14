@@ -18,6 +18,7 @@
 #include "metadata/manager.h"
 #include "filesystem/operations.h"
 #include "distributed/commit_log.h"
+#include <shared_mutex>
 
 namespace chfs {
 
@@ -245,6 +246,10 @@ private:
   /**
    * {You can add anything you want here}
    */
+
+  std::unique_ptr<std::vector<std::shared_mutex>> inode_mutex_;
+  std::mutex allocator_mutex;
+
 };
 
 } // namespace chfs
