@@ -75,7 +75,7 @@ DataServer::DataServer(std::string const &address, u16 port,
 DataServer::~DataServer() { server_.reset(); }
 
 // added a helper function to get/increase the version of a block
-auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+inline auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
   auto blk_sz = bm->block_size();
   auto versions_per_blk = blk_sz / sizeof(version_t);
   auto version_blk_id = block_id / versions_per_blk;
@@ -86,7 +86,7 @@ auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> versi
   return version_p[version_blk_offs];
 }
 
-auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+inline auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
   auto blk_sz = bm->block_size();
   auto versions_per_blk = blk_sz / sizeof(version_t);
   auto version_blk_id = block_id / versions_per_blk;
@@ -147,6 +147,7 @@ auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   std::lock_guard<std::mutex> lock(allocator_mutex_);
 
   auto res = block_allocator_->allocate();
+
   if (res.is_ok()) {
     auto version = increase_version(block_allocator_->bm, res.unwrap());
     return {res.unwrap(), version};
