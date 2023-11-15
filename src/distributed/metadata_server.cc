@@ -134,6 +134,9 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
 
+  if (inode_mutex_->size() <= parent)
+    return 0;
+  std::unique_lock<std::shared_mutex> p_lock((*inode_mutex_)[parent]);
   std::lock_guard<std::mutex> lock(allocator_mutex);
 
   if (type == DirectoryType) {
@@ -153,7 +156,7 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
 auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
-  
+
   // acquire parent lock
   if (inode_mutex_->size() <= parent)
     return false;
@@ -167,24 +170,18 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
       id = i.id;
   if (id == KInvalidInodeID)
     return false;
-
-  p_lock.unlock();
-  std::unique_lock<std::shared_mutex> p_w_lock((*inode_mutex_)[parent]);
   
   std::vector<u8> inode(DiskBlockSize);
   auto inode_p = reinterpret_cast<Inode *>(inode.data());
-  auto ino_bid = operation_->inode_manager_->get(id);
-  if (ino_bid.is_err())
+  auto ino_bid_res = operation_->inode_manager_->get(id);
+  if (ino_bid_res.is_err())
     return false;
-  //change parent time
-  operation_->block_manager_->read_block(ino_bid.unwrap(), inode.data());
-  inode_p->inner_attr.set_mtime(time(0));
-  operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
+  auto ino_bid = ino_bid_res.unwrap();
 
-  // acquire
-  if (inode_mutex_->size() > id)
-    std::unique_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
-  std::lock_guard<std::mutex> allo_lock(allocator_mutex);
+  // acquire locks
+  if (inode_mutex_->size() <= id)
+    return false;
+  std::shared_lock<std::shared_mutex> lock((*inode_mutex_)[id]);
 
   if (inode_p->get_type() == InodeType::FILE) {
     auto block_mac_ids = reinterpret_cast<std::tuple<block_id_t, mac_id_t, version_t> *>(inode_p->blocks);
@@ -195,9 +192,34 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
       auto entry = block_mac_ids[i];
       clients_[std::get<1>(entry)]->async_call("free_block", std::get<0>(entry));
     }
-    operation_->inode_manager_->free_inode(id);
-  } else
-    operation_->remove_file(id);
+    std::unique_lock<std::mutex> allo_lock(allocator_mutex);
+    auto deallo_res = operation_->block_allocator_->deallocate(ino_bid);
+    if (deallo_res.is_err())
+      return false;
+    auto free_res = operation_->inode_manager_->free_inode(id);
+    if (free_res.is_err())
+      return false;
+    allo_lock.unlock();
+  } else {
+    std::unique_lock<std::mutex> allo_lock(allocator_mutex);
+    auto rm_res = operation_->remove_file(id);
+    if (rm_res.is_err())
+      return false;
+    allo_lock.unlock();
+  }
+
+  lock.unlock();
+  p_lock.unlock();
+  std::unique_lock<std::shared_mutex> p_w_lock((*inode_mutex_)[parent]);
+
+  //change parent time
+  auto par_ino_bid_res = operation_->inode_manager_->get(parent);
+  if (par_ino_bid_res.is_err())
+    return false;
+  auto par_ino_bid = par_ino_bid_res.unwrap();
+  operation_->block_manager_->read_block(par_ino_bid, inode.data());
+  inode_p->inner_attr.set_mtime(time(0));
+  operation_->block_manager_->write_block(par_ino_bid, inode.data());
 
   auto read_res = operation_->read_file(parent);
     if (read_res.is_err())
@@ -260,6 +282,13 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
 auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   // TODO: Implement this function.
 
+  auto mac_id = generator.rand(1, num_data_servers);
+  auto machine = clients_[mac_id];
+  auto call_res = machine->call("alloc_block");
+  if (call_res.is_err())
+    return {};
+  auto res = call_res.unwrap()->as<std::pair<block_id_t, version_t>>();
+
   // acquire lock
   if (inode_mutex_->size() <= id)
     return {};
@@ -274,18 +303,14 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   auto block_sz = DiskBlockSize;
   auto block_num = (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
   auto max_block_num = (block_sz - sizeof(Inode)) / sizeof(std::tuple<block_id_t, mac_id_t, version_t>);
-  if (max_block_num < block_num + 1)
+  if (max_block_num < block_num + 1) {
+    clients_[mac_id]->call("free_block", res.first);
     return {};
-
-  auto mac_id = generator.rand(1, num_data_servers);
-  auto machine = clients_[mac_id];
-  auto call_res = machine->call("alloc_block");
-  if (call_res.is_err())
-    return {};
-  auto res = call_res.unwrap()->as<std::pair<block_id_t, version_t>>();
+  }
 
   block_mac_ids[block_num] = {res.first, mac_id, res.second};
   inode_p->inner_attr.size += block_sz;
+  
   operation_->block_manager_->write_block(ino_bid.unwrap(), inode.data());
 
   return {res.first, mac_id, res.second};
@@ -294,10 +319,8 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
 // {Your code here}
 auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
                                 mac_id_t machine_id) -> bool {
-  // TODO: Implement this function. 
-
-  // std::cout << "freeing mac " << machine_id << " block " << block_id << std::endl;
-  
+  // TODO: Implement this function.
+ 
   if (machine_id <= 0 || machine_id > num_data_servers)
     return false;
 
@@ -331,7 +354,6 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   if (call_res.is_err())
     return false;
   auto res = call_res.unwrap()->as<bool>();
-  // std::cout << "mac id " << machine_id << " free block " << block_id << " res: " << res << std::endl;
   if (!res)
     return false;
 

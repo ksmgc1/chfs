@@ -249,7 +249,7 @@ private:
 
   std::unique_ptr<std::vector<std::shared_mutex>> inode_mutex_;
   std::mutex allocator_mutex;
-
+  [[maybe_unused]] std::mutex global_mutex_;
 };
 
 } // namespace chfs

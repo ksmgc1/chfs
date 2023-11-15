@@ -75,7 +75,7 @@ DataServer::DataServer(std::string const &address, u16 port,
 DataServer::~DataServer() { server_.reset(); }
 
 // added a helper function to get/increase the version of a block
-inline auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
   auto blk_sz = bm->block_size();
   auto versions_per_blk = blk_sz / sizeof(version_t);
   auto version_blk_id = block_id / versions_per_blk;
@@ -86,7 +86,7 @@ inline auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -
   return version_p[version_blk_offs];
 }
 
-inline auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
   auto blk_sz = bm->block_size();
   auto versions_per_blk = blk_sz / sizeof(version_t);
   auto version_blk_id = block_id / versions_per_blk;
@@ -159,7 +159,7 @@ auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
 auto DataServer::free_block(block_id_t block_id) -> bool {
   // TODO: Implement this function.
   
-  // acquire allocator mutex and block mutex
+  // acquire allocator mutex
   if (block_id >= block_mutex_->size())
     return false;
   std::lock_guard<std::mutex> lock(allocator_mutex_);
