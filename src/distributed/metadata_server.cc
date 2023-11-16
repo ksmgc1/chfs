@@ -82,6 +82,25 @@ inline auto MetadataServer::init_fs(const std::string &data_path) {
       operation_->block_manager_->set_may_fail(true);
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled_);
+    
+    // allocate blocks for log
+    block_id_t first_log_block;
+    block_id_t last_log_block;
+    for (auto i = 0; i < commit_log->log_block_num_; ++i) {
+      auto log_block_res = operation_->block_allocator_->allocate();
+      if (log_block_res.is_err()) {
+        std::cerr << "Cannot allocate block for log." << std::endl;
+        exit(1);
+      }
+      if (i == 0)
+        first_log_block = log_block_res.unwrap(); 
+      else if (i == commit_log->log_block_num_ - 1)
+        last_log_block = log_block_res.unwrap();
+    }
+    std::cout << "first log block: " << first_log_block << std::endl;
+    CHFS_ASSERT(last_log_block - first_log_block == commit_log->log_block_num_ - 1, "Blocks for log are not continuous.");
+
+    commit_log->log_start_block_ = first_log_block;
   }
 
   bind_handlers();
