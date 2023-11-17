@@ -70,6 +70,7 @@ public:
 
   struct EntryBlock {
     block_id_t next_entry_block_id;
+    usize entry_num;
     LogEntry entry[0];
   };
 

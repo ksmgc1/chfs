@@ -21,6 +21,7 @@ namespace chfs {
 // TODO
 
 class BlockIterator;
+class BlockOperation;
 
 /**
  * BlockManager implements a block device to read/write block devices
