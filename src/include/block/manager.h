@@ -39,6 +39,7 @@ protected:
   bool in_memory; // whether we use in-memory to emulate the block manager
   bool maybe_failed;
   usize write_fail_cnt;
+  usize not_log_block_cnt;  // I must add this for log implementation
 
 public:
   /**
@@ -114,7 +115,10 @@ public:
   /**
    * Get the total number of blocks in the block manager
    */
-  auto total_blocks() const -> usize { return this->block_cnt; }
+  auto total_blocks() const -> usize { 
+    // return this->block_cnt; 
+    return this->not_log_block_cnt; // the block size showed to above layer
+  }
 
   /**
    * Get the block size of the device managed by the manager

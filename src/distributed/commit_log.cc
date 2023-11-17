@@ -16,7 +16,8 @@ CommitLog::CommitLog(std::shared_ptr<BlockManager> bm,
                      bool is_checkpoint_enabled)
     : is_checkpoint_enabled_(is_checkpoint_enabled), bm_(bm) {
   log_block_written_ = 0;
-  cur_log_block_id_ = 0;
+  log_start_block_ = KDefaultBlockCnt - log_block_num_;
+  cur_log_block_id_ = log_start_block_;
   cur_log_offset_ = 0;
   for (auto i = 0; i < log_block_num_; ++i)
     log_block_allocated_map_[i] = false;
@@ -36,13 +37,62 @@ auto CommitLog::append_log(txn_id_t txn_id,
                            std::vector<std::shared_ptr<BlockOperation>> ops)
     -> void {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  
+  auto log_size = ops.size();
+  if (log_size == 0) return;
+  std::vector<u8> entry_block(bm_->block_size());
+  auto entry_block_p = reinterpret_cast<EntryBlock *>(entry_block.data());
+  std::vector<block_id_t> sync_list;
+
+  bm_->read_block(cur_log_block_id_, entry_block.data());
+  sync_list.push_back(cur_log_block_id_);
+  for (auto i = 0; i < log_size; ++i) {
+    auto storage_block_id = allocate_log_block().unwrap();
+    bm_->write_block(storage_block_id, ops[i]->new_block_state_.data());
+    sync_list.push_back(storage_block_id);
+    entry_block_p->entry[cur_log_offset_] = {txn_id, ops[i]->block_id_, storage_block_id};
+    ++cur_log_offset_;
+    if (cur_log_offset_ == log_entries_per_block) {
+      auto next_entry_block_id = allocate_log_block().unwrap();
+      entry_block_p->next_entry_block_id = next_entry_block_id;
+      bm_->write_block(cur_log_block_id_, entry_block.data());
+      bm_->zero_block(next_entry_block_id);
+      bm_->read_block(next_entry_block_id, entry_block.data());
+      ++log_block_written_;
+      cur_log_block_id_ = next_entry_block_id;
+      cur_log_offset_ = 0;
+      sync_list.push_back(next_entry_block_id);
+    }
+  }
+
+  for (auto &i : sync_list)
+    bm_->sync(i);
+
 }
 
 // {Your code here}
 auto CommitLog::commit_log(txn_id_t txn_id) -> void {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  
+  std::vector<u8> entry_block(bm_->block_size());
+  auto entry_block_p = reinterpret_cast<EntryBlock *>(entry_block.data());
+  bm_->read_block(cur_log_block_id_, entry_block.data());
+  entry_block_p->entry[cur_log_offset_] = {txn_id, 0, 0};
+  ++cur_log_offset_;
+  if (cur_log_offset_ == log_entries_per_block) {
+    auto next_entry_block_id = allocate_log_block().unwrap();
+    entry_block_p->next_entry_block_id = next_entry_block_id;
+    bm_->write_block(cur_log_block_id_, entry_block.data());
+    bm_->sync(cur_log_block_id_);
+    bm_->zero_block(next_entry_block_id);
+    ++log_block_written_;
+    cur_log_block_id_ = next_entry_block_id;
+    cur_log_offset_ = 0;
+  } else {
+    bm_->write_block(cur_log_block_id_, entry_block.data());
+    bm_->sync(cur_log_block_id_);
+  }
+
 }
 
 // {Your code here}
