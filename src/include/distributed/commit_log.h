@@ -74,7 +74,7 @@ public:
     LogEntry entry[0];
   };
 
-  block_id_t log_start_block_ = KInvalidBlockID;
+  block_id_t log_start_block_ = KDefaultBlockCnt - log_block_num_;
   static const block_id_t log_block_num_ = 1024;
   static const usize log_entries_per_block = (DiskBlockSize - sizeof(EntryBlock)) / sizeof(LogEntry);
 
@@ -91,6 +91,11 @@ private:
         return log_start_block_ + i;
       }
     return ErrorType::OUT_OF_RESOURCE;
+  }
+
+  auto deallocate_log_block(block_id_t real_bid) -> void {
+    if (real_bid == log_start_block_) return;   // reserve first block
+    log_block_allocated_map_[real_bid - log_start_block_] = false;
   }
 };
 

@@ -155,10 +155,10 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
 
   txn_id_t txn_id;
   if (is_log_enabled_) {
-    operation_->block_manager_->set_log_enabled(true);
     bm_mutex_.lock();
     // std::cout << "mknode locked name = " << name << std::endl;
     txn_id = ++cur_txn_id;
+    operation_->block_manager_->set_log_enabled(true);
   }
 
   if (inode_mutex_->size() <= parent)
@@ -202,9 +202,9 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
   // TODO: Implement this function.
   txn_id_t txn_id;
   if (is_log_enabled_) {
-    operation_->block_manager_->set_log_enabled(true);
     bm_mutex_.lock();
     txn_id = ++cur_txn_id;
+    operation_->block_manager_->set_log_enabled(true);
   }
 
   // acquire parent lock
@@ -291,7 +291,6 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     auto lgres = operation_->block_manager_->write_and_clear_ops();
     if (lgres.is_err())
       return false;
-    // std::cout << "unlock" << std::endl;
     bm_mutex_.unlock();
     operation_->block_manager_->set_log_enabled(false);
   }

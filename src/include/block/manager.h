@@ -172,6 +172,8 @@ public:
     return KNullOk;
   }
 
+  auto clear_ops() -> void { this->ops_storage.clear(); }
+
   auto set_log_enabled(bool enabled) -> void { this->is_log_enabled = enabled; }
 };
 
