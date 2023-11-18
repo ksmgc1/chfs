@@ -250,6 +250,8 @@ private:
   std::unique_ptr<std::vector<std::shared_mutex>> inode_mutex_;
   std::mutex allocator_mutex;
   [[maybe_unused]] std::mutex global_mutex_;
+  std::atomic_int32_t cur_txn_id = 0;
+  [[maybe_unused]] std::mutex bm_mutex_; // need a global lock for bm because of the mysterious log architecture...
 };
 
 } // namespace chfs

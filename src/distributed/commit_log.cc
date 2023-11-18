@@ -38,6 +38,7 @@ auto CommitLog::append_log(txn_id_t txn_id,
     -> void {
   // TODO: Implement this function.
   
+  // std::cout << "cur log block id:" << cur_log_block_id_ << std::endl;
   auto log_size = ops.size();
   if (log_size == 0) return;
   std::vector<u8> entry_block(bm_->block_size());
@@ -48,7 +49,7 @@ auto CommitLog::append_log(txn_id_t txn_id,
   sync_list.push_back(cur_log_block_id_);
   for (auto i = 0; i < log_size; ++i) {
     auto storage_block_id = allocate_log_block().unwrap();
-    bm_->write_block(storage_block_id, ops[i]->new_block_state_.data());
+    bm_->true_write_block(storage_block_id, ops[i]->new_block_state_.data(), false);
     sync_list.push_back(storage_block_id);
     entry_block_p->entry[cur_log_offset_] = {txn_id, ops[i]->block_id_, storage_block_id};
     ++entry_block_p->entry_num;
@@ -56,8 +57,8 @@ auto CommitLog::append_log(txn_id_t txn_id,
     if (cur_log_offset_ == log_entries_per_block) {
       auto next_entry_block_id = allocate_log_block().unwrap();
       entry_block_p->next_entry_block_id = next_entry_block_id;
-      bm_->write_block(cur_log_block_id_, entry_block.data());
-      bm_->zero_block(next_entry_block_id);
+      bm_->true_write_block(cur_log_block_id_, entry_block.data(), false);
+      bm_->true_zero_block(next_entry_block_id);
       bm_->read_block(next_entry_block_id, entry_block.data());
       ++log_block_written_;
       cur_log_block_id_ = next_entry_block_id;
@@ -66,7 +67,7 @@ auto CommitLog::append_log(txn_id_t txn_id,
     }
   }
 
-  bm_->write_block(cur_log_block_id_, entry_block.data());
+  bm_->true_write_block(cur_log_block_id_, entry_block.data(), false);
   for (auto &i : sync_list)
     bm_->sync(i);
 
@@ -84,14 +85,14 @@ auto CommitLog::commit_log(txn_id_t txn_id) -> void {
   if (cur_log_offset_ == log_entries_per_block) {
     auto next_entry_block_id = allocate_log_block().unwrap();
     entry_block_p->next_entry_block_id = next_entry_block_id;
-    bm_->write_block(cur_log_block_id_, entry_block.data());
+    bm_->true_write_block(cur_log_block_id_, entry_block.data(), false);
     bm_->sync(cur_log_block_id_);
-    bm_->zero_block(next_entry_block_id);
+    bm_->true_zero_block(next_entry_block_id);
     ++log_block_written_;
     cur_log_block_id_ = next_entry_block_id;
     cur_log_offset_ = 0;
   } else {
-    bm_->write_block(cur_log_block_id_, entry_block.data());
+    bm_->true_write_block(cur_log_block_id_, entry_block.data(), false);
     bm_->sync(cur_log_block_id_);
   }
 
@@ -137,7 +138,7 @@ auto CommitLog::recover() -> void {
       if (j.block_id == 0 || j.storage_block_id == 0)
         break;
       bm_->read_block(j.storage_block_id, buffer.data());
-      bm_->write_block(j.block_id, buffer.data());
+      bm_->true_write_block(j.block_id, buffer.data(), false);
     }
   }
 

@@ -82,7 +82,7 @@ inline auto MetadataServer::init_fs(const std::string &data_path) {
       operation_->block_manager_->set_may_fail(true);
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled_);
-    
+    cur_txn_id = 0;
     // // allocate blocks for log
     // block_id_t first_log_block;
     // block_id_t last_log_block;
@@ -153,20 +153,45 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
 
+  txn_id_t txn_id;
+  if (is_log_enabled_) {
+    operation_->block_manager_->set_log_enabled(true);
+    bm_mutex_.lock();
+    // std::cout << "mknode locked name = " << name << std::endl;
+    txn_id = ++cur_txn_id;
+  }
+
   if (inode_mutex_->size() <= parent)
     return 0;
   std::unique_lock<std::shared_mutex> p_lock((*inode_mutex_)[parent]);
   std::lock_guard<std::mutex> lock(allocator_mutex);
 
+  ChfsResult<inode_id_t> res(0);
   if (type == DirectoryType) {
-    auto res = operation_->mkdir(parent, name.c_str());
-    if (res.is_ok())
-      return res.unwrap();
+    res = operation_->mkdir(parent, name.c_str());
   } else if (type == RegularFileType) {
-    auto res = operation_->mkfile(parent, name.c_str());
-    if (res.is_ok())
-      return res.unwrap();
+    res = operation_->mkfile(parent, name.c_str());
   }
+
+  if (res.is_ok()) {
+    if (is_log_enabled_) {
+      auto ops = operation_->block_manager_->get_ops();
+      std::vector<std::shared_ptr<BlockOperation>> block_ops;
+      for (auto &i : ops)
+        block_ops.emplace_back(std::make_shared<BlockOperation>(i.first, i.second));
+      commit_log->append_log(txn_id, block_ops);
+      commit_log->commit_log(txn_id);
+      // do block operations after commit
+      auto lgres = operation_->block_manager_->write_and_clear_ops();
+      if (lgres.is_err())
+        return 0;
+      bm_mutex_.unlock();
+      operation_->block_manager_->set_log_enabled(false);
+    }
+    // std::cout << res.unwrap() << std::endl;
+    return res.unwrap();
+  }
+  // std::cout << "erorr: " << (int)res.unwrap_error() << std::endl;
 
   return 0;
 }
@@ -175,6 +200,12 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
 auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
+  txn_id_t txn_id;
+  if (is_log_enabled_) {
+    operation_->block_manager_->set_log_enabled(true);
+    bm_mutex_.lock();
+    txn_id = ++cur_txn_id;
+  }
 
   // acquire parent lock
   if (inode_mutex_->size() <= parent)
@@ -248,6 +279,22 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     src = rm_from_directory(src, std::string(name));
     buffer = std::vector<u8>(src.begin(), src.end());
     operation_->write_file(parent, buffer);
+
+  if (is_log_enabled_) {
+    auto ops = operation_->block_manager_->get_ops();
+    std::vector<std::shared_ptr<BlockOperation>> block_ops;
+    for (auto &i : ops)
+      block_ops.emplace_back(std::make_shared<BlockOperation>(i.first, i.second));
+    commit_log->append_log(txn_id, block_ops);
+    commit_log->commit_log(txn_id);
+    // do block operations after commit
+    auto lgres = operation_->block_manager_->write_and_clear_ops();
+    if (lgres.is_err())
+      return false;
+    // std::cout << "unlock" << std::endl;
+    bm_mutex_.unlock();
+    operation_->block_manager_->set_log_enabled(false);
+  }
   
   return true;
 }

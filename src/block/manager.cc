@@ -104,12 +104,23 @@ BlockManager::BlockManager(const std::string &file, usize block_cnt, bool is_log
   if (is_log_enabled) {
     CHFS_ASSERT(this->block_cnt - 1024 == KDefaultBlockCnt - 1024, "Block id reserved for log is invalid.");
     this->not_log_block_cnt = this->block_cnt - 1024; // reserve blocks for log
+    ops_storage.clear();
   } else 
     this->not_log_block_cnt = this->block_cnt;
 }
 
 auto BlockManager::write_block(block_id_t block_id, const u8 *data)
     -> ChfsNullResult {
+  
+  if (is_log_enabled) {
+    if (block_id >= block_cnt)
+      return ChfsNullResult(ErrorType::INVALID_ARG);
+    std::vector<u8> op_block(block_sz);
+    memcpy(op_block.data(), data, block_sz);
+    ops_storage.emplace_back(block_id, op_block);
+    return KNullOk;
+  }
+
   if (this->maybe_failed && block_id < this->block_cnt) {
     if (this->write_fail_cnt >= 3) {
       this->write_fail_cnt = 0;
@@ -129,9 +140,36 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
   return KNullOk;
 }
 
+auto BlockManager::true_write_block(block_id_t block_id, const u8 *data, bool may_failed) -> ChfsNullResult {
+  if (may_failed && block_id < this->block_cnt) {
+    if (this->write_fail_cnt >= 3) {
+      this->write_fail_cnt = 0;
+      return ErrorType::INVALID;
+    }
+  }
+
+  if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offset = block_id * block_sz;
+  memcpy(&block_data[offset], data, block_sz);
+  return KNullOk;
+}
+
 auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
                                        usize offset, usize len)
     -> ChfsNullResult {
+
+  if (is_log_enabled) {
+    if (block_id >= block_cnt || offset >= block_sz || offset + len > block_sz)
+      return ChfsNullResult(ErrorType::INVALID_ARG);
+    u64 block_start = block_id * block_sz;
+    std::vector<u8> op_block(block_sz);
+    memcpy(op_block.data(), &block_data[block_start], block_sz);
+    memcpy(&(op_block.data()[offset]), data, len);
+    ops_storage.emplace_back(block_id, op_block);
+    return KNullOk;
+  }
+
   if (this->maybe_failed && block_id < this->block_cnt) {
     if (this->write_fail_cnt >= 3) {
       this->write_fail_cnt = 0;
@@ -151,7 +189,42 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
   return KNullOk;
 }
 
+auto BlockManager::true_write_partial_block(block_id_t block_id, const u8 *data,
+                                   usize offset, usize len, bool may_failed) -> ChfsNullResult {
+  
+  if (may_failed && block_id < this->block_cnt) {
+    if (this->write_fail_cnt >= 3) {
+      this->write_fail_cnt = 0;
+      return ErrorType::INVALID;
+    }
+  }
+
+  if (block_id >= block_cnt || offset >= block_sz || offset + len > block_sz)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offs = block_id * block_sz + offset;
+  memcpy(&block_data[offs], data, len);
+  return KNullOk;
+}
+                                   
+
 auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
+
+  if (is_log_enabled && !ops_storage.empty()) {
+    auto i = ops_storage.rbegin();
+    if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+    for (; i != ops_storage.rend(); ++i) {
+      if (i->first == block_id) {
+        memcpy(data, i->second.data(), block_sz);
+        break;
+      }
+    }
+    if (i == ops_storage.rend()) {
+      u64 offset = block_id * block_sz;
+      memcpy(data, &block_data[offset], block_sz);
+    }
+    return KNullOk;
+  }
 
   if (block_id >= block_cnt)
     return ChfsNullResult(ErrorType::INVALID_ARG);
@@ -162,7 +235,25 @@ auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
 }
 
 auto BlockManager::zero_block(block_id_t block_id) -> ChfsNullResult {
+
+  if (is_log_enabled) {
+    if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+    std::vector<u8> op_block(block_sz);
+    memset(op_block.data(), 0, block_sz);
+    ops_storage.emplace_back(block_id, op_block);
+    return KNullOk;
+  }
   
+  if (block_id >= block_cnt)
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  u64 offset = block_id * block_sz;
+  memset(&block_data[offset], 0, block_sz);
+
+  return KNullOk;
+}
+
+auto BlockManager::true_zero_block(block_id_t block_id) -> ChfsNullResult {
   if (block_id >= block_cnt)
     return ChfsNullResult(ErrorType::INVALID_ARG);
   u64 offset = block_id * block_sz;

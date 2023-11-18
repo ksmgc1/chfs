@@ -21,7 +21,6 @@ namespace chfs {
 // TODO
 
 class BlockIterator;
-class BlockOperation;
 
 /**
  * BlockManager implements a block device to read/write block devices
@@ -41,6 +40,9 @@ protected:
   bool maybe_failed;
   usize write_fail_cnt;
   usize not_log_block_cnt;  // I must add this for log implementation
+  std::vector<std::pair<block_id_t, std::vector<u8>>> ops_storage;
+private:
+  bool is_log_enabled = false;
 
 public:
   /**
@@ -89,11 +91,16 @@ public:
   virtual auto write_block(block_id_t block_id, const u8 *block_data)
       -> ChfsNullResult;
 
+  auto true_write_block(block_id_t block_id, const u8 *block_data, bool may_failed) -> ChfsNullResult;
+
   /**
    * Write a partial block to the internal block device.
    */
   virtual auto write_partial_block(block_id_t block_id, const u8 *block_data,
                                    usize offset, usize len) -> ChfsNullResult;
+
+  auto true_write_partial_block(block_id_t block_id, const u8 *block_data,
+                                   usize offset, usize len, bool may_failed) -> ChfsNullResult;
 
   /**
    * Read a block to the internal block device.
@@ -108,6 +115,8 @@ public:
    * @param block_id id of the block
    */
   virtual auto zero_block(block_id_t block_id) -> ChfsNullResult;
+
+  auto true_zero_block(block_id_t block_id) -> ChfsNullResult;
 
   auto total_storage_sz() const -> usize {
     return this->block_cnt * this->block_sz;
@@ -147,6 +156,23 @@ public:
   auto set_may_fail(bool may_fail) -> void {
     this->maybe_failed = may_fail;
   }
+
+  auto get_ops() -> std::vector<std::pair<block_id_t, std::vector<u8>>> { return this->ops_storage; }
+
+  auto write_and_clear_ops() -> ChfsNullResult { 
+    for (auto i = ops_storage.begin(); i != ops_storage.end(); ++i) {
+      // std::cout << "writing block " << i->first << std::endl;
+      auto write_res = true_write_block(i->first, i->second.data(), this->maybe_failed);
+      if (write_res.is_err()) {
+        this->ops_storage.clear();
+        return write_res.unwrap_error();
+      }
+    }
+    this->ops_storage.clear();
+    return KNullOk;
+  }
+
+  auto set_log_enabled(bool enabled) -> void { this->is_log_enabled = enabled; }
 };
 
 /**
