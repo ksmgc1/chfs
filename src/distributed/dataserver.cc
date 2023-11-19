@@ -103,7 +103,7 @@ inline auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_
 auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
-
+  
   // acuqire read lock
   if (block_id >= block_mutex_->size())
     return {};

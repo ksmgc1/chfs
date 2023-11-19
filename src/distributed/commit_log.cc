@@ -67,7 +67,7 @@ auto CommitLog::append_log(txn_id_t txn_id,
       cur_log_offset_ = 0;
       sync_list.push_back(next_entry_block_id);
     }
-    if (get_log_entry_num() == kMaxLogSize) {
+    if (is_checkpoint_enabled_ && get_log_entry_num() == kMaxLogSize) {
       bm_->true_write_block(cur_log_block_id_, entry_block.data(), false);
       checkpoint();
       bm_->read_block(cur_log_block_id_, entry_block.data());

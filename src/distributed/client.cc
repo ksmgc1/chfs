@@ -119,7 +119,7 @@ auto ChfsClient::get_type_attr(inode_id_t id)
 auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
     -> ChfsResult<std::vector<u8>> {
   // TODO: Implement this function.
-  
+
   auto blk_map_res = metadata_server_->call("get_block_map", id);
   if (blk_map_res.is_err())
     return ChfsResult<std::vector<u8>>(blk_map_res.unwrap_error());
@@ -132,18 +132,13 @@ auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
   std::vector<u8> file(size);
   auto read_len = 0;
   for (auto i = start_blk; i <= end_blk; ++i) {
-    auto len = DiskBlockSize;
+
+    auto len = std::min(size - read_len, DiskBlockSize);
     auto offs = 0;
-    if (i == start_blk && i == end_blk) {
-      len = size;
-      offs = offset % DiskBlockSize;
+    if (i == start_blk) {
+      offs = offs % DiskBlockSize;
+      len = std::min(DiskBlockSize - offs, size - read_len);
     }
-    else if (i == start_blk) {
-      len = DiskBlockSize - (offset % DiskBlockSize);
-      offs = offset % DiskBlockSize;
-    }
-    else if (i == end_blk)
-      len = (size - (DiskBlockSize - (offset % DiskBlockSize))) % DiskBlockSize;
     
     auto read_res = data_servers_[std::get<1>(blk_map[i])]->async_call("read_data", std::get<0>(blk_map[i]), offs, len, std::get<2>(blk_map[i]));
     if (read_res.is_err())
@@ -165,7 +160,7 @@ auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
     -> ChfsNullResult {
   // TODO: Implement this function.
   
-  auto size = data.size();
+  auto size = static_cast<usize>(data.size());
   auto blk_map_res = metadata_server_->call("get_block_map", id);
   if (blk_map_res.is_err())
     return ChfsNullResult(blk_map_res.unwrap_error());
@@ -184,18 +179,13 @@ auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
 
   auto write_len = 0;
   for (auto i = start_blk; i <= end_blk; ++i) {
-    auto len = DiskBlockSize;
+
+    auto len = std::min(size - write_len, DiskBlockSize);
     auto offs = 0;
-    if (i == start_blk && i == end_blk) {
-      len = size;
-      offs = offset % DiskBlockSize;
+    if (i == start_blk) {
+      offs = offs % DiskBlockSize;
+      len = std::min(DiskBlockSize - offs, size - write_len);
     }
-    else if (i == start_blk) {
-      len = DiskBlockSize - (offset % DiskBlockSize);
-      offs = offset % DiskBlockSize;
-    }
-    else if (i == end_blk)
-      len = (size - (DiskBlockSize - (offset % DiskBlockSize))) % DiskBlockSize;
     
     std::vector<u8> write_data(data.begin() + write_len, data.begin() + write_len + len);
     write_len += len;

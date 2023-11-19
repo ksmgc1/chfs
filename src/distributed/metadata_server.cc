@@ -83,24 +83,6 @@ inline auto MetadataServer::init_fs(const std::string &data_path) {
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled_);
     cur_txn_id = 0;
-    // // allocate blocks for log
-    // block_id_t first_log_block;
-    // block_id_t last_log_block;
-    // for (auto i = 0; i < commit_log->log_block_num_; ++i) {
-    //   auto log_block_res = operation_->block_allocator_->allocate();
-    //   if (log_block_res.is_err()) {
-    //     std::cerr << "Cannot allocate block for log." << std::endl;
-    //     exit(1);
-    //   }
-    //   if (i == 0)
-    //     first_log_block = log_block_res.unwrap(); 
-    //   else if (i == commit_log->log_block_num_ - 1)
-    //     last_log_block = log_block_res.unwrap();
-    // }
-    // std::cout << "first log block: " << first_log_block << std::endl;
-    // CHFS_ASSERT(last_log_block - first_log_block == commit_log->log_block_num_ - 1, "Blocks for log are not continuous.");
-
-    // commit_log->log_start_block_ = first_log_block;
   }
 
   bind_handlers();
@@ -156,7 +138,6 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
   txn_id_t txn_id;
   if (is_log_enabled_) {
     bm_mutex_.lock();
-    // std::cout << "mknode locked name = " << name << std::endl;
     txn_id = ++cur_txn_id;
     operation_->block_manager_->set_log_enabled(true);
   }
@@ -188,10 +169,8 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
       bm_mutex_.unlock();
       operation_->block_manager_->set_log_enabled(false);
     }
-    // std::cout << res.unwrap() << std::endl;
     return res.unwrap();
   }
-  // std::cout << "erorr: " << (int)res.unwrap_error() << std::endl;
 
   return 0;
 }
