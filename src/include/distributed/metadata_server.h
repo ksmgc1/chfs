@@ -18,6 +18,7 @@
 #include "metadata/manager.h"
 #include "filesystem/operations.h"
 #include "distributed/commit_log.h"
+#include <shared_mutex>
 
 namespace chfs {
 
@@ -245,6 +246,12 @@ private:
   /**
    * {You can add anything you want here}
    */
+
+  std::unique_ptr<std::vector<std::shared_mutex>> inode_mutex_;
+  std::mutex allocator_mutex;
+  [[maybe_unused]] std::mutex global_mutex_;
+  std::atomic_int32_t cur_txn_id = 0;
+  [[maybe_unused]] std::mutex bm_mutex_; // need a global lock for bm because of the mysterious log architecture...
 };
 
 } // namespace chfs

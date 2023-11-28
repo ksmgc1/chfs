@@ -22,7 +22,7 @@ using version_t = u32;
 const usize KDefaultBlockCnt = 4096; // use a default 8MB file size
 const usize DiskBlockSize = 4096;    // 4KB
 const usize DistributedMaxInodeSupported = 4096;
-const usize kMaxLogBlockSize = 10 * 1024; // 40MB, 10 * 1K * 4K/per block = 40M
+const usize kMaxLogBlockSize = 10 * 1024; // 40MB, 10 * 1K * 4K/per block = 40M  // are you sure?
 const usize kMaxLogSize = 128; // when this reaches, trigger checkpoint
 
 } // namespace chfs

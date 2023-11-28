@@ -15,12 +15,32 @@ auto DataServer::initialize(std::string const &data_path) {
   auto bm = std::shared_ptr<BlockManager>(
       new BlockManager(data_path, KDefaultBlockCnt));
   if (is_initialized) {
+    auto blk_sz = bm->block_size();
+    auto versions_per_blk = blk_sz / sizeof(version_t);
+    auto total_blks = bm->total_blocks();
+    auto version_block_num = total_blks % versions_per_blk ? total_blks / versions_per_blk + 1 : total_blks / versions_per_blk;
+    
     block_allocator_ =
-        std::make_shared<BlockAllocator>(bm, 0, false);
+        std::make_shared<BlockAllocator>(bm, version_block_num, false);
+
+    // init mutex
+    block_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_blks);
   } else {
     // We need to reserve some blocks for storing the version of each block
+
+    auto blk_sz = bm->block_size();
+    auto versions_per_blk = blk_sz / sizeof(version_t);
+    auto total_blks = bm->total_blocks();
+    auto version_block_num = total_blks % versions_per_blk ? total_blks / versions_per_blk + 1 : total_blks / versions_per_blk;
+    for (auto i = 0; i < version_block_num; ++i)
+      bm->zero_block(i);
+
     block_allocator_ = std::shared_ptr<BlockAllocator>(
-        new BlockAllocator(bm, 0, true));
+        new BlockAllocator(bm, version_block_num, true));
+
+    // init mutex
+    block_mutex_ = std::make_unique<std::vector<std::shared_mutex>>(total_blks);
+
   }
 
   // Initialize the RPC server and bind all handlers
@@ -54,37 +74,102 @@ DataServer::DataServer(std::string const &address, u16 port,
 
 DataServer::~DataServer() { server_.reset(); }
 
+// added a helper function to get/increase the version of a block
+inline auto get_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+  auto blk_sz = bm->block_size();
+  auto versions_per_blk = blk_sz / sizeof(version_t);
+  auto version_blk_id = block_id / versions_per_blk;
+  auto version_blk_offs = block_id % versions_per_blk;
+  std::vector<u8> version_blk(bm->block_size());
+  bm->read_block(version_blk_id, version_blk.data());
+  auto version_p = reinterpret_cast<version_t *>(version_blk.data());
+  return version_p[version_blk_offs];
+}
+
+inline auto increase_version(std::shared_ptr<BlockManager> bm, block_id_t block_id) -> version_t {
+  auto blk_sz = bm->block_size();
+  auto versions_per_blk = blk_sz / sizeof(version_t);
+  auto version_blk_id = block_id / versions_per_blk;
+  auto version_blk_offs = block_id % versions_per_blk;
+  std::vector<u8> version_blk(bm->block_size());
+  bm->read_block(version_blk_id, version_blk.data());
+  auto version_p = reinterpret_cast<version_t *>(version_blk.data());
+  version_p[version_blk_offs] = version_p[version_blk_offs] + 1;
+  bm->write_block(version_blk_id, version_blk.data());
+  return version_p[version_blk_offs];
+}
+
 // {Your code here}
 auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  // acuqire read lock
+  if (block_id >= block_mutex_->size())
+    return {};
+  std::shared_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
 
-  return {};
+  auto act_version = get_version(block_allocator_->bm, block_id);
+  if (act_version != version)
+    return {};
+
+  const auto block_sz = block_allocator_->bm->block_size();
+  if (offset + len > block_sz)
+    return {};
+  std::vector<u8> buffer(block_sz);
+  block_allocator_->bm->read_block(block_id, buffer.data());
+
+  return {buffer.begin() + offset, buffer.begin() + offset + len};
 }
 
 // {Your code here}
 auto DataServer::write_data(block_id_t block_id, usize offset,
                             std::vector<u8> &buffer) -> bool {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
 
+  // acquire write lock
+  if (block_id >= block_mutex_->size())
+    return false;
+  std::unique_lock<std::shared_mutex> lock((*block_mutex_)[block_id]);
+
+  auto res = block_allocator_->bm->write_partial_block(block_id, buffer.data(), offset, buffer.size());  
+
+  if (res.is_ok())
+    return true;
   return false;
 }
 
 // {Your code here}
 auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  // acquire allocator mutex
+  std::lock_guard<std::mutex> lock(allocator_mutex_);
 
+  auto res = block_allocator_->allocate();
+
+  if (res.is_ok()) {
+    auto version = increase_version(block_allocator_->bm, res.unwrap());
+    return {res.unwrap(), version};
+  }
+  
   return {};
 }
 
 // {Your code here}
 auto DataServer::free_block(block_id_t block_id) -> bool {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  
+  // acquire allocator mutex
+  if (block_id >= block_mutex_->size())
+    return false;
+  std::lock_guard<std::mutex> lock(allocator_mutex_);
 
+  auto res = block_allocator_->deallocate(block_id);
+  if (res.is_ok()) {
+    increase_version(block_allocator_->bm, block_id);
+    return true;
+  } 
   return false;
 }
 } // namespace chfs

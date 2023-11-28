@@ -62,6 +62,41 @@ public:
   /**
    * {Append anything if you need}
    */
+  struct LogEntry {
+    txn_id_t txn_id;
+    block_id_t block_id;
+    block_id_t storage_block_id;
+  };
+
+  struct EntryBlock {
+    block_id_t next_entry_block_id;
+    usize entry_num;
+    LogEntry entry[0];
+  };
+
+  block_id_t log_start_block_ = KDefaultBlockCnt - log_block_num_;
+  static const block_id_t log_block_num_ = 1024;
+  static const usize log_entries_per_block = (DiskBlockSize - sizeof(EntryBlock)) / sizeof(LogEntry);
+
+private:
+  block_id_t log_block_written_;
+  block_id_t cur_log_block_id_;
+  usize cur_log_offset_;
+  bool log_block_allocated_map_[log_block_num_];
+
+  auto allocate_log_block() -> ChfsResult<block_id_t> {
+    for (auto i = 0; i < log_block_num_; ++i)
+      if (log_block_allocated_map_[i] == false) {
+        log_block_allocated_map_[i] = true;
+        return log_start_block_ + i;
+      }
+    return ErrorType::OUT_OF_RESOURCE;
+  }
+
+  auto deallocate_log_block(block_id_t real_bid) -> void {
+    if (real_bid == log_start_block_) return;   // reserve first block
+    log_block_allocated_map_[real_bid - log_start_block_] = false;
+  }
 };
 
 } // namespace chfs
