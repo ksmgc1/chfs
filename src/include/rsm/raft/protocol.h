@@ -20,16 +20,26 @@ const std::string RAFT_RPC_INSTALL_SNAPSHOT = "install snapshot";
 struct RequestVoteArgs {
     /* Lab3: Your code here */
     
+    int term;
+    int candidate_id;
+    int last_log_index;
+    int last_log_term;
     MSGPACK_DEFINE(
-    
+        term,
+        candidate_id,
+        last_log_index,
+        last_log_term
     )
 };
 
 struct RequestVoteReply {
     /* Lab3: Your code here */
 
+    int term;
+    bool vote_granted;
     MSGPACK_DEFINE(
-    
+        term,
+        vote_granted
     )
 };
 

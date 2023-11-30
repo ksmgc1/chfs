@@ -142,6 +142,9 @@ private:
     std::unique_ptr<std::thread> background_apply;
 
     /* Lab3: Your code here */
+    int voted_for;
+    int last_log_index;
+    int last_log_term;
 };
 
 template <typename StateMachine, typename Command>
@@ -261,7 +264,24 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> RequestVoteReply
 {
     /* Lab3: Your code here */
-    return RequestVoteReply();
+
+    RequestVoteReply reply;
+    reply.term = current_term;
+
+    if (args.term < current_term)
+        reply.vote_granted = false;
+    else if (voted_for != -1 && voted_for != args.candidate_id)
+        reply.vote_granted = false;
+    else if (args.last_log_term < last_log_term)
+        reply.vote_granted = false;
+    else if (args.last_log_term == last_log_term && args.last_log_index < last_log_index)
+        reply.vote_granted = false;
+    else {
+        reply.vote_granted = true;
+        voted_for = args.candidate_id;
+    }
+
+    return reply;
 }
 
 template <typename StateMachine, typename Command>
