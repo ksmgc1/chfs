@@ -28,7 +28,7 @@ private:
     std::mutex mtx;
     /* Lab3: Your code here */
 
-    std::map<int, std::pair<int, Command> log_map;
+    std::map<int, std::pair<int, Command>> log_map;
 
 };
 

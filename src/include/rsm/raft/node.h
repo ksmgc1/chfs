@@ -11,6 +11,7 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <filesystem>
+#include <random>
 
 #include "rsm/state_machine.h"
 #include "rsm/raft/log.h"
@@ -142,8 +143,15 @@ private:
     std::unique_ptr<std::thread> background_apply;
 
     /* Lab3: Your code here */
+    // random
+    std::mt19937 random_generator;
+    int64_t random_time(int64_t start, int64_t max) {
+        std::uniform_int_distribution<> distrib(0, max);
+        return distrib(random_generator) + start;
+    }
     // election
     int64_t last_time;
+    int64_t election_timeout;
     int voted_for;
     int last_log_index;
     int last_log_term;
@@ -185,9 +193,11 @@ RaftNode<StateMachine, Command>::RaftNode(int node_id, std::vector<RaftNodeConfi
    /* Lab3: Your code here */ 
     rpc_clients_map.clear();
     for (auto &i: node_configs) {
-        if (i.node_id == my_id) continue;
         rpc_clients_map.insert({i.node_id, std::make_unique<RpcClient>(i.ip_address, i.port, true)});
     }
+
+    std::random_device rd;
+    random_generator = std::mt19937(rd());
 
     rpc_server->run(true, configs.size()); 
 }
@@ -224,8 +234,10 @@ auto RaftNode<StateMachine, Command>::start() -> int
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
     last_time = now;
+    std::uniform_int_distribution<> distrib(0, 200);
+    election_timeout = distrib(random_generator) + 300;
     last_ping_time = now;
-    thread_pool = std::make_unique<ThreadPool>(8);
+    thread_pool = std::make_unique<ThreadPool>(16);
 
     stopped = false;
     background_election = std::make_unique<std::thread>(&RaftNode::run_background_election, this);
@@ -256,8 +268,8 @@ auto RaftNode<StateMachine, Command>::is_leader() -> std::tuple<bool, int>
     /* Lab3: Your code here */
     std::unique_lock<std::mutex> lock(mtx);
     if (role == RaftRole::Leader)
-        return std::make_tuple(true, my_id);
-    else return std::make_tuple(false, leader_id);
+        return std::make_tuple(true, current_term);
+    else return std::make_tuple(false, current_term);
 }
 
 template <typename StateMachine, typename Command>
@@ -284,6 +296,7 @@ auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int 
     args.prev_log_term = last_log_term;
     args.entries = commands;
     args.leader_commit = commit_index;
+    return std::make_tuple(false, -1, -1);
 }
 
 template <typename StateMachine, typename Command>
@@ -311,13 +324,14 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> RequestVoteReply
 {
     /* Lab3: Your code here */
-    RAFT_LOG("receive request vote");
     std::unique_lock<std::mutex> lock(mtx);
     RequestVoteReply reply;
-    reply.term = current_term;
 
-    if (args.term < current_term)
+    if (args.term < current_term) {
         reply.vote_granted = false;
+        reply.term = current_term;
+        return reply;
+    }
     else {
         last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -327,6 +341,8 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
             role = RaftRole::Follower;
             voted_for = -1;
         }
+
+        reply.term = current_term;
 
         if (voted_for != -1 && voted_for != args.candidate_id)
             reply.vote_granted = false;
@@ -339,7 +355,6 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
             voted_for = args.candidate_id;
         }
     }
-    RAFT_LOG("reply: %d", reply.vote_granted);
     return reply;
 }
 
@@ -349,6 +364,8 @@ void RaftNode<StateMachine, Command>::handle_request_vote_reply(int target, cons
     /* Lab3: Your code here */
 
     std::unique_lock<std::mutex> lock(mtx);
+    if (reply.term < current_term)
+        return;
     if (reply.term > current_term) {
         current_term = reply.term;
         role = RaftRole::Follower;
@@ -359,7 +376,7 @@ void RaftNode<StateMachine, Command>::handle_request_vote_reply(int target, cons
     if (reply.vote_granted) {
         ++granted_num;
         if (granted_num > node_configs.size() / 2) {
-            RAFT_LOG("i'm leader");
+            granted_num = 0;
             role = RaftRole::Leader;
             leader_id = my_id;
         }
@@ -378,6 +395,9 @@ auto RaftNode<StateMachine, Command>::append_entries(RpcAppendEntriesArgs rpc_ar
     if (rpc_arg.term > current_term) {
         current_term = rpc_arg.term;
         role = RaftRole::Follower;
+        last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        election_timeout = random_time(400, 200);
     }
     AppendEntriesReply reply;
     reply.term = current_term;
@@ -499,33 +519,38 @@ void RaftNode<StateMachine, Command>::run_background_election() {
                 return;
             }
             /* Lab3: Your code here */
-            if (role == RaftRole::Leader)
+            if (role == RaftRole::Leader) {
                 std::this_thread::yield();
+                continue;
+            }
             
-            std::unique_lock<std::mutex> lock(mtx);
-            auto now = std::chrono::duration_cast<std::chrono::milliseconds>(                                               \
+            // std::unique_lock<std::mutex> lock(mtx);
+            auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
-            std::srand(now);
-            if (now - last_time < std::rand() % 300 + 150) {
-                lock.unlock();
-                std::this_thread::yield();
+            
+            if (now - last_time < election_timeout) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(election_timeout - (now - last_time)));
+                continue;
             } else {    // become candidate, start voting
-                RAFT_LOG("became canidate");
+                std::unique_lock<std::mutex> lock(mtx);
                 role = RaftRole::Candidate;
                 ++current_term;
                 voted_for = my_id;
                 granted_num = 1;
                 last_time = now;
+                election_timeout = random_time(400, 200);
                 RequestVoteArgs args;
                 args.term = current_term;
                 args.candidate_id = my_id;
                 args.last_log_index = last_log_index;
                 args.last_log_term = last_log_term;
+                // lock.unlock();
                 for (auto &i: rpc_clients_map) {
+                    if (i.first == my_id || i.second == nullptr)
+                        continue;
                     thread_pool->enqueue(&RaftNode::send_request_vote, this, i.first, args);
-                    RAFT_LOG("SENDING REQUEST VOTE TO %d", i.first);
                 }
-                std::this_thread::yield();
+                // std::this_thread::yield();
             }
         }
     }
@@ -583,15 +608,18 @@ void RaftNode<StateMachine, Command>::run_background_ping() {
                 return;
             }
             /* Lab3: Your code here */
-            if (role != RaftRole::Leader)
+            if (role != RaftRole::Leader) {
                 std::this_thread::yield();
-            std::unique_lock<std::mutex> lock(mtx);
+                continue;
+            }
             auto now = std::chrono::duration_cast<std::chrono::milliseconds>(                                               \
                 std::chrono::system_clock::now().time_since_epoch()).count();
-            if (now - last_time < 10) {
-                lock.unlock();
-                std::this_thread::yield();
+            if (now - last_ping_time < 10) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10 - (now - last_ping_time)));
+                continue;
             } else {
+                std::unique_lock<std::mutex> lock(mtx);
+                last_ping_time = now;
                 AppendEntriesArgs<Command> arg;
                 arg.term = current_term;
                 arg.leader_id = my_id;
@@ -599,8 +627,11 @@ void RaftNode<StateMachine, Command>::run_background_ping() {
                 arg.prev_log_term = last_log_term;
                 arg.entries = std::vector<Command>();
                 arg.leader_commit = commit_index;
-                for (auto &i: rpc_clients_map)
+                for (auto &i: rpc_clients_map) {
+                    if (i.first == my_id || i.second == nullptr)
+                        continue;
                     thread_pool->enqueue(&RaftNode::send_append_entries, this, i.first, arg);
+                }
             }
 
         }
