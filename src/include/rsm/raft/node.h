@@ -270,7 +270,20 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int cmd_size) -> std::tuple<bool, int, int>
 {
     /* Lab3: Your code here */
-    return std::make_tuple(false, -1, -1);
+    if (role != RaftRole::Leader)
+        return std::make_tuple(false, -1, -1);
+    std::unique_lock<std::mutex> lock(mtx);
+    Command command;
+    command.deserialize(cmd_data, cmd_size);
+    std::vector<Command> commands;
+    commands.push_back(command);
+    AppendEntriesArgs<Command> args;
+    args.term = current_term;
+    args.leader_id = my_id;
+    args.prev_log_index = last_log_index;
+    args.prev_log_term = last_log_term;
+    args.entries = commands;
+    args.leader_commit = commit_index;
 }
 
 template <typename StateMachine, typename Command>
