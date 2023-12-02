@@ -46,13 +46,31 @@ struct RequestVoteReply {
 template <typename Command>
 struct AppendEntriesArgs {
     /* Lab3: Your code here */
+
+    int term;
+    int leader_id;
+    int prev_log_index;
+    int prev_log_term;
+    std::vector<Command> entries;
+    int leader_commit;
 };
 
 struct RpcAppendEntriesArgs {
     /* Lab3: Your code here */
 
+    int term;
+    int leader_id;
+    int prev_log_index;
+    int prev_log_term;
+    std::vector<std::vector<u8>> entries;
+    int leader_commit;
     MSGPACK_DEFINE(
-    
+        term,
+        leader_id,
+        prev_log_index,
+        prev_log_term,
+        entries,
+        leader_commit
     )
 };
 
@@ -60,21 +78,49 @@ template <typename Command>
 RpcAppendEntriesArgs transform_append_entries_args(const AppendEntriesArgs<Command> &arg)
 {
     /* Lab3: Your code here */
-    return RpcAppendEntriesArgs();
+
+    RpcAppendEntriesArgs res;
+    res.term = arg.term;
+    res.leader_id = arg.leader_id;
+    res.prev_log_index = arg.prev_log_index;
+    res.prev_log_term = arg.prev_log_term;
+    std::vector<std::vector<u8>> entries;
+    for (auto &i: arg.entries)
+        entries.emplace_back(i.serialize(i.size()));
+    res.entries = std::move(entries);
+    res.leader_commit = arg.leader_commit;
+    return res;
 }
 
 template <typename Command>
 AppendEntriesArgs<Command> transform_rpc_append_entries_args(const RpcAppendEntriesArgs &rpc_arg)
 {
     /* Lab3: Your code here */
-    return AppendEntriesArgs<Command>();
+
+    AppendEntriesArgs<Command> res;
+    res.term = rpc_arg.term;
+    res.leader_id = rpc_arg.leader_id;
+    res.prev_log_index = rpc_arg.prev_log_index;
+    res.prev_log_term = rpc_arg.prev_log_term;
+    std::vector<Command> entries;
+    for (auto &i: rpc_arg.entries) {
+        Command command;
+        command.deserialize(i, i.size());
+        entries.push_back(command);
+    }
+    res.entries = std::move(entries);
+    res.leader_commit = rpc_arg.leader_commit;
+    return res;
 }
 
 struct AppendEntriesReply {
     /* Lab3: Your code here */
 
+    int term;
+    bool success;
     MSGPACK_DEFINE(
-    
+        term,
+        success
     )
 };
 
