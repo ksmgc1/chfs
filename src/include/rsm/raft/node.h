@@ -233,9 +233,6 @@ auto RaftNode<StateMachine, Command>::start() -> int
 
     role = RaftRole::Follower;
     leader_id = -1;
-    current_term = 0;
-    // last_log_index = 0;
-    // last_log_term = 0;
     voted_for = -1;
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -356,8 +353,10 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
 
         if (args.term > current_term) {
             current_term = args.term;
+            log_storage->set_term(current_term);
             role = RaftRole::Follower;
             voted_for = -1;
+            log_storage->set_voted(voted_for);
         }
 
         reply.term = current_term;
@@ -377,6 +376,7 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
          }else {
             reply.vote_granted = true;
             voted_for = args.candidate_id;
+            log_storage->set_voted(voted_for);
             last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         }
@@ -396,6 +396,7 @@ void RaftNode<StateMachine, Command>::handle_request_vote_reply(int target, cons
         return;
     if (reply.term > current_term) {
         current_term = reply.term;
+        log_storage->set_term(current_term);
         role = RaftRole::Follower;
         last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -437,6 +438,7 @@ auto RaftNode<StateMachine, Command>::append_entries(RpcAppendEntriesArgs rpc_ar
         // if (role == RaftRole::Follower && rpc_arg.term > current_term)
         //     RAFT_LOG("received bigger leader");
         current_term = rpc_arg.term;
+        log_storage->set_term(current_term);
         leader_id = rpc_arg.leader_id;
         role = RaftRole::Follower;
         last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -483,6 +485,7 @@ void RaftNode<StateMachine, Command>::handle_append_entries_reply(int node_id, c
     std::unique_lock<std::mutex> lock(mtx);
     if (reply.term > current_term) {
         current_term = reply.term;
+        log_storage->set_term(current_term);
         role = RaftRole::Follower;
         return;
     }
@@ -619,7 +622,9 @@ void RaftNode<StateMachine, Command>::run_background_election() {
                 RAFT_LOG("became candidate");
                 role = RaftRole::Candidate;
                 ++current_term;
+                log_storage->set_term(current_term);
                 voted_for = my_id;
+                log_storage->set_voted(voted_for);
                 granted_num = 1;
                 last_time = now;
                 election_timeout = random_time(1000, 1000);
