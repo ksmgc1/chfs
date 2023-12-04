@@ -51,7 +51,7 @@ struct AppendEntriesArgs {
     int leader_id;
     int prev_log_index;
     int prev_log_term;
-    std::vector<Command> entries;
+    std::vector<std::pair<int, Command>> entries;
     int leader_commit;
 };
 
@@ -62,14 +62,18 @@ struct RpcAppendEntriesArgs {
     int leader_id;
     int prev_log_index;
     int prev_log_term;
-    std::vector<std::vector<u8>> entries;
+    int log_size;
+    std::vector<int> entries_terms;
+    std::vector<std::vector<u8>> entries_logs;
     int leader_commit;
     MSGPACK_DEFINE(
         term,
         leader_id,
         prev_log_index,
         prev_log_term,
-        entries,
+        log_size,
+        entries_terms,
+        entries_logs,
         leader_commit
     )
 };
@@ -84,10 +88,15 @@ RpcAppendEntriesArgs transform_append_entries_args(const AppendEntriesArgs<Comma
     res.leader_id = arg.leader_id;
     res.prev_log_index = arg.prev_log_index;
     res.prev_log_term = arg.prev_log_term;
-    std::vector<std::vector<u8>> entries;
-    for (auto &i: arg.entries)
-        entries.emplace_back(i.serialize(i.size()));
-    res.entries = std::move(entries);
+    res.log_size = arg.entries.size();
+    std::vector<int> entries_terms;
+    std::vector<std::vector<u8>> entries_logs;
+    for (auto &i: arg.entries) {
+        entries_terms.emplace_back(i.first);
+        entries_logs.emplace_back(i.second.serialize(i.second.size()));
+    }
+    res.entries_logs = std::move(entries_logs);
+    res.entries_terms = std::move(entries_terms);
     res.leader_commit = arg.leader_commit;
     return res;
 }
@@ -102,11 +111,11 @@ AppendEntriesArgs<Command> transform_rpc_append_entries_args(const RpcAppendEntr
     res.leader_id = rpc_arg.leader_id;
     res.prev_log_index = rpc_arg.prev_log_index;
     res.prev_log_term = rpc_arg.prev_log_term;
-    std::vector<Command> entries;
-    for (auto &i: rpc_arg.entries) {
+    std::vector<std::pair<int, Command>> entries;
+    for (auto i = 0; i < rpc_arg.log_size; ++i) {
         Command command;
-        command.deserialize(i, i.size());
-        entries.push_back(command);
+        command.deserialize(rpc_arg.entries_logs[i], rpc_arg.entries_logs[i].size());
+        entries.emplace_back(rpc_arg.entries_terms[i], command);
     }
     res.entries = std::move(entries);
     res.leader_commit = rpc_arg.leader_commit;
