@@ -30,6 +30,10 @@ public:
     // term, log
     std::pair<int, Command> get_log(int index);
 
+    int get_term();
+
+    int get_voted();
+
     void set_term(int term);
 
     void set_voted(int voted_for);
@@ -50,7 +54,7 @@ private:
         int term;
     };
 
-    constexpr block_id_t STATE_BLOCK = 1;
+    const block_id_t STATE_BLOCK = 1;
 
     StorageState storage_state;
     block_id_t cur_block_id;
@@ -66,6 +70,30 @@ RaftLog<Command>::RaftLog(std::shared_ptr<BlockManager> bm) : bm_(bm)
 {
     /* Lab3: Your code here */
     log_map.clear();
+    std::vector<u8> buf(bm_->block_size());
+    auto state_p = reinterpret_cast<StorageState *>(buf.data());
+    bm_->read_block(STATE_BLOCK, buf.data());
+    storage_state = *state_p;
+    cur_block_id = 2;
+    cur_offset = 0;
+    bm_->read_block(cur_block_id, buf.data());
+    std::vector<u8> cmd_data;
+    for (int idx = 1; idx <= storage_state.log_size; ++idx) {
+        EntryStorage * entry_p = reinterpret_cast<EntryStorage *>(buf.data() + cur_offset);
+        usize cmd_size = entry_p->entry_size - sizeof(EntryStorage);
+        cmd_data.clear();
+        cmd_data.insert(cmd_data.end(), buf.begin() + cur_offset + sizeof(EntryStorage),
+            buf.begin() + cur_offset + entry_p->entry_size);
+        Command cmd;
+        cmd.deserialize(cmd_data, cmd_size);
+        log_map[idx] = {entry_p->term, cmd};
+        cur_offset += entry_p->entry_size;
+        if (cur_offset >= bm_->block_size()) {
+            ++cur_block_id;
+            cur_offset = 0;
+            bm_->read_block(cur_block_id, buf.data());
+        }
+    }
 }
 
 template <typename Command>
@@ -79,18 +107,20 @@ RaftLog<Command>::~RaftLog()
 template <typename Command>
 int RaftLog<Command>::size() {
     std::unique_lock<std::mutex> lock(mtx);
-    if (log_map.size() == 0)
-        return 0;
-    return log_map.crbegin()->first;
+    // if (log_map.size() == 0)
+    //     return 0;
+    // return log_map.crbegin()->first;
+    return storage_state.log_size;
 }
 
 template <typename Command>
 void RaftLog<Command>::append_log(int term, Command entry) {
     std::unique_lock<std::mutex> lock(mtx);
-    int before_sz = size();
+    int before_sz = storage_state.log_size;
     disk_append_log(term, entry);
     log_map.insert_or_assign(before_sz + 1, std::make_pair(term, entry));
     ++storage_state.log_size;
+    flush_state();
 }
 
 template <typename Command>
@@ -101,6 +131,8 @@ void RaftLog<Command>::discard_log(int start_index) {
         while (it != log_map.end()) {
             log_map.erase(it++);
         }
+    storage_state.log_size = start_index - 1;
+    flush_state();
 }
 
 template <typename Command>
@@ -152,13 +184,27 @@ inline void RaftLog<Command>::flush_state() {
 }
 
 template <typename Command>
+int RaftLog<Command>::get_term() {
+    std::unique_lock<std::mutex> lock(mtx);
+    return storage_state.current_term;
+}
+
+template <typename Command>
+int RaftLog<Command>::get_voted() {
+    std::unique_lock<std::mutex> lock(mtx);
+    return storage_state.voted_for;
+}
+
+template <typename Command>
 void RaftLog<Command>::set_term(int term) {
+    std::unique_lock<std::mutex> lock(mtx);
     storage_state.current_term = term;
     flush_state();
 }
 
 template <typename Command>
 void RaftLog<Command>::set_voted(int voted_for) {
+    std::unique_lock<std::mutex> lock(mtx);
     storage_state.voted_for = voted_for;
     flush_state();
 }

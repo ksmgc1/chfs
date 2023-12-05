@@ -198,12 +198,18 @@ RaftNode<StateMachine, Command>::RaftNode(int node_id, std::vector<RaftNodeConfi
     std::random_device rd;
     random_generator = std::mt19937(rd());
 
-    log_storage = std::make_unique<RaftLog<Command>>(nullptr);
+    std::string filename("/tmp/raft_log/node" + std::to_string(my_id) + ".log");
+    auto bm = std::make_shared<BlockManager>(filename);
+    log_storage = std::make_unique<RaftLog<Command>>(bm);
+
     state = std::make_unique<StateMachine>();
 
     // persist state
     commit_index = 0;
     last_applied = 0;
+
+    current_term = log_storage->get_term();
+    voted_for = log_storage->get_voted();
 
     rpc_server->run(true, configs.size()); 
 }
@@ -296,10 +302,10 @@ auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int 
     command.deserialize(cmd_data, cmd_size);
     // int this_log_idx = log_storage->size() + 1;
     // auto last_log_attr = log_storage->get_log_stat(last_log_idx);
+    RAFT_LOG("appending log %d", log_storage->size() + 1);
     log_storage->append_log(current_term, command);
-
     lock.unlock();
-    RAFT_LOG("appended log %d", this_log_idx);
+    RAFT_LOG("appended log %d", log_storage->size());
     // while (true) {
     //     lock.lock();
     //     if (role != RaftRole::Leader)
@@ -310,7 +316,7 @@ auto RaftNode<StateMachine, Command>::new_command(std::vector<u8> cmd_data, int 
     //     std::this_thread::yield();
     // }
 
-    return {true, current_term, this_log_idx};
+    return {true, current_term, log_storage->size()};
 }
 
 template <typename StateMachine, typename Command>
@@ -380,7 +386,7 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
             last_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         }
-        // RAFT_LOG("RV reply term: %d, scs: %d", reply.term, reply.vote_granted);
+        RAFT_LOG("RV reply term: %d, scs: %d", reply.term, reply.vote_granted);
     }
     // RAFT_LOG("rec RV term %d, node %d, reply %d", args.term, args.candidate_id, reply.vote_granted);
     return reply;
