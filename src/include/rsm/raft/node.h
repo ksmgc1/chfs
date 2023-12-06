@@ -239,7 +239,7 @@ auto RaftNode<StateMachine, Command>::start() -> int
 
     role = RaftRole::Follower;
     leader_id = -1;
-    voted_for = -1;
+    // voted_for = -1;
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
     election_timeout = random_time(1000, 500);
@@ -257,7 +257,7 @@ auto RaftNode<StateMachine, Command>::start() -> int
     background_ping = std::make_unique<std::thread>(&RaftNode::run_background_ping, this);
     background_commit = std::make_unique<std::thread>(&RaftNode::run_background_commit, this);
     background_apply = std::make_unique<std::thread>(&RaftNode::run_background_apply, this);
-
+    // RAFT_LOG("log size: %d", log_storage->size());
     return 0;
 }
 
@@ -369,7 +369,7 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
 
         int sz = log_storage->size();
         int tm = log_storage->get_log_stat(sz).second;
-        // RAFT_LOG("RV sz: %d, tm: %d", args.last_log_index, args.last_log_term);
+        // RAFT_LOG("my sz: %d, tm: %d", sz, tm);
         if (voted_for != -1 && voted_for != args.candidate_id) {
             // RAFT_LOG("have been voted");
             reply.vote_granted = false;
@@ -379,7 +379,7 @@ auto RaftNode<StateMachine, Command>::request_vote(RequestVoteArgs args) -> Requ
         } else if (args.last_log_term == tm && args.last_log_index < sz) {
             // RAFT_LOG("last log idx less");
             reply.vote_granted = false;
-         }else {
+        } else {
             reply.vote_granted = true;
             voted_for = args.candidate_id;
             log_storage->set_voted(voted_for);
