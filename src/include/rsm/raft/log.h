@@ -38,6 +38,12 @@ public:
 
     void set_voted(int voted_for);
 
+    void save_snapshot(std::vector<u8> data, int last_index, int last_term);
+
+    bool has_snapshot();
+
+    std::vector<u8> get_snapshot();
+
 private:
     std::shared_ptr<BlockManager> bm_;
     std::mutex mtx;
@@ -47,6 +53,11 @@ private:
         int current_term;
         int voted_for;
         int log_size;
+        // snapshot
+        int last_included_index;
+        int last_included_term;
+        usize snapshot_size;
+        // block_id_t snapshot_block_id;
     };
 
     struct EntryStorage {
@@ -55,13 +66,15 @@ private:
     };
 
     const block_id_t STATE_BLOCK = 1;
+    const block_id_t SNAPSHOT_START_BLOCK = 2;
 
     StorageState storage_state;
     block_id_t cur_block_id;
     usize cur_offset;
     std::map<int, std::tuple<int, Command, block_id_t, usize>> log_map; // index -> term, command, block id, offset
+    std::vector<u8> snapshot;
 
-    inline void disk_append_log(int term, Command entry);
+    inline void disk_append_log(int index, int term, Command entry);
     inline void flush_state();
 };
 
@@ -74,11 +87,33 @@ RaftLog<Command>::RaftLog(std::shared_ptr<BlockManager> bm) : bm_(bm)
     auto state_p = reinterpret_cast<StorageState *>(buf.data());
     bm_->read_block(STATE_BLOCK, buf.data());
     storage_state = *state_p;
-    cur_block_id = 2;
+    cur_block_id = SNAPSHOT_START_BLOCK;
+    snapshot.clear();
+    if (storage_state.last_included_index > 0) {    // read snapshot
+        usize sz = storage_state.snapshot_size;
+        std::vector<u8> buf(bm_->block_size());
+        // auto block_num = sz % bm_->block_size() == 0 ? sz / bm_->block_size() + 1 : sz / bm_->block_size();
+        auto read_sz = 0;
+        while (read_sz < sz) {
+            auto remain_sz = sz - read_sz;
+            auto len = remain_sz > bm_->block_size() ? bm_->block_size() : remain_sz;
+            if (len == bm_->block_size()) {
+                bm_->read_block(cur_block_id, buf.data());
+                snapshot.insert(snapshot.end(), buf.begin(), buf.end());
+            } else {
+                bm_->read_block(cur_block_id, buf.data());
+                snapshot.insert(snapshot.end(), buf.begin(), buf.begin() + len);
+            }
+            ++cur_block_id;
+            read_sz += len;
+        }
+        if (storage_state.snapshot_size != snapshot.size())
+            std::cerr << "Unexpected behavior: read snapshot size is not equal with stored snapshot size.\n";
+    }
     cur_offset = 0;
     bm_->read_block(cur_block_id, buf.data());
     std::vector<u8> cmd_data;
-    for (int idx = 1; idx <= storage_state.log_size; ++idx) {
+    for (int idx = storage_state.last_included_index + 1; idx <= storage_state.log_size; ++idx) {
         EntryStorage *entry_p = reinterpret_cast<EntryStorage *>(buf.data() + cur_offset);
         usize cmd_size = entry_p->entry_size - sizeof(EntryStorage);
         cmd_data.clear();
@@ -100,6 +135,7 @@ template <typename Command>
 RaftLog<Command>::~RaftLog()
 {
     /* Lab3: Your code here */
+    bm_->flush();
 }
 
 /* Lab3: Your code here */
@@ -116,8 +152,8 @@ int RaftLog<Command>::size() {
 template <typename Command>
 void RaftLog<Command>::append_log(int term, Command entry) {
     std::unique_lock<std::mutex> lock(mtx);
-    // int before_sz = storage_state.log_size;
-    disk_append_log(term, entry);
+    int before_sz = storage_state.log_size;
+    disk_append_log(before_sz + 1, term, entry);
     ++storage_state.log_size;
     flush_state();
 }
@@ -162,14 +198,14 @@ std::pair<int, Command> RaftLog<Command>::get_log(int index) {
 }
 
 template <typename Command>
-inline void RaftLog<Command>::disk_append_log(int term, Command entry) {
+inline void RaftLog<Command>::disk_append_log(int index, int term, Command entry) {
     usize entry_sz = sizeof(EntryStorage) + entry.size();
     if (cur_offset + entry_sz > bm_->block_size()) {
         ++cur_block_id;
         bm_->true_zero_block(cur_block_id);
         cur_offset = 0;
     }
-    log_map[storage_state.log_size + 1] = {term, entry, cur_block_id, cur_offset};
+    log_map[index] = {term, entry, cur_block_id, cur_offset};
     std::vector<u8> buf(sizeof(EntryStorage));
     EntryStorage * bufp = reinterpret_cast<EntryStorage *>(buf.data());
     bufp->entry_size = entry_sz;
@@ -212,6 +248,55 @@ void RaftLog<Command>::set_voted(int voted_for) {
     std::unique_lock<std::mutex> lock(mtx);
     storage_state.voted_for = voted_for;
     flush_state();
+}
+
+template <typename Command>
+void RaftLog<Command>::save_snapshot(std::vector<u8> data, int last_index, int last_term) {
+    if (last_index <= 0)
+        return;
+    std::unique_lock<std::mutex> lock(mtx);
+    snapshot = data;
+    usize sz = data.size();
+    // auto block_num = sz % bm_->block_size() == 0 ? sz / bm_->block_size() + 1 : sz / bm_->block_size();
+    block_id_t sn_block_id = SNAPSHOT_START_BLOCK;
+    auto write_sz = 0;
+    while (write_sz < sz) {
+        auto remain_sz = sz - write_sz;
+        auto len = remain_sz > bm_->block_size() ? bm_->block_size() : remain_sz;
+        if (len == bm_->block_size()) {
+            bm_->true_write_block(sn_block_id, data.data() + write_sz, false);
+        } else {
+            bm_->true_zero_block(sn_block_id);
+            bm_->true_write_partial_block(sn_block_id, data.data() + write_sz, 0, len, false);
+        }
+        ++sn_block_id;
+        write_sz += len;
+    }
+    storage_state.snapshot_size = sz;
+    storage_state.last_included_index = last_index;
+    storage_state.last_included_term = last_term;
+    storage_state.log_size = std::max(last_index, storage_state.log_size);
+    flush_state();
+    for (auto it = log_map.begin(); it->first <= last_index;) {
+        log_map.erase(it++);
+    }
+    cur_block_id = sn_block_id;
+    cur_offset = 0;
+    for (auto it = log_map.find(last_index + 1); it != log_map.end(); ++it) {
+        disk_append_log(it->first, std::get<0>(it->second), std::get<1>(it->second));
+    }
+}
+
+template <typename Command>
+bool RaftLog<Command>::has_snapshot() {
+    std::unique_lock<std::mutex> lock(mtx);
+    return storage_state.last_included_index > 0;
+}
+
+template <typename Command>
+std::vector<u8> RaftLog<Command>::get_snapshot() {
+    std::unique_lock<std::mutex> lock(mtx);
+    return snapshot;
 }
 
 } /* namespace chfs */
