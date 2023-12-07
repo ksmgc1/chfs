@@ -57,7 +57,6 @@ private:
         int last_included_index;
         int last_included_term;
         usize snapshot_size;
-        // block_id_t snapshot_block_id;
     };
 
     struct EntryStorage {
@@ -92,7 +91,6 @@ RaftLog<Command>::RaftLog(std::shared_ptr<BlockManager> bm) : bm_(bm)
     if (storage_state.last_included_index > 0) {    // read snapshot
         usize sz = storage_state.snapshot_size;
         std::vector<u8> buf(bm_->block_size());
-        // auto block_num = sz % bm_->block_size() == 0 ? sz / bm_->block_size() + 1 : sz / bm_->block_size();
         auto read_sz = 0;
         while (read_sz < sz) {
             auto remain_sz = sz - read_sz;
@@ -143,9 +141,6 @@ RaftLog<Command>::~RaftLog()
 template <typename Command>
 int RaftLog<Command>::size() {
     std::unique_lock<std::mutex> lock(mtx);
-    // if (log_map.size() == 0)
-    //     return 0;
-    // return log_map.crbegin()->first;
     return storage_state.log_size;
 }
 
@@ -259,7 +254,6 @@ void RaftLog<Command>::save_snapshot(std::vector<u8> data, int last_index, int l
     std::unique_lock<std::mutex> lock(mtx);
     snapshot = data;
     usize sz = data.size();
-    // auto block_num = sz % bm_->block_size() == 0 ? sz / bm_->block_size() + 1 : sz / bm_->block_size();
     block_id_t sn_block_id = SNAPSHOT_START_BLOCK;
     auto write_sz = 0;
     while (write_sz < sz) {
