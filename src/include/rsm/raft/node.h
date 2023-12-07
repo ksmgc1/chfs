@@ -323,6 +323,13 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::save_snapshot() -> bool
 {
     /* Lab3: Your code here */ 
+    std::unique_lock<std::mutex> lock(mtx);
+    if (log_storage->size() == 0)   // cannot snapshot without a log
+        return false;
+    int applied_idx = last_applied;
+    int applied_term = log_storage->get_log_stat(applied_idx).second;
+    auto snapshot = state->snapshot();
+    log_storage->save_snapshot(snapshot, applied_idx, applied_term);
     return true;
 }
 
@@ -330,7 +337,7 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::get_snapshot() -> std::vector<u8>
 {
     /* Lab3: Your code here */
-    return std::vector<u8>();
+    return state->snapshot();
 }
 
 /******************************************************************

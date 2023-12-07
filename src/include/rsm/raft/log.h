@@ -178,6 +178,8 @@ std::pair<int, int> RaftLog<Command>::get_log_stat(int index) {
     std::unique_lock<std::mutex> lock(mtx);
     if (index == 0)
         return {0, 0};
+    if (index == storage_state.last_included_index)
+        return {storage_state.last_included_index, storage_state.last_included_term};
     if (log_map.find(index) != log_map.end())
         return {index, std::get<0>(log_map[index])};
     else
