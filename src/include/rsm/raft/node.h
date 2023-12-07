@@ -201,12 +201,18 @@ RaftNode<StateMachine, Command>::RaftNode(int node_id, std::vector<RaftNodeConfi
     std::string filename("/tmp/raft_log/node" + std::to_string(my_id) + ".log");
     auto bm = std::make_shared<BlockManager>(filename);
     log_storage = std::make_unique<RaftLog<Command>>(bm);
-
     state = std::make_unique<StateMachine>();
 
-    // persist state
     commit_index = 0;
     last_applied = 0;
+    auto stat = log_storage->get_snapshot_stat();
+    if (stat.first > 0) {
+        state->apply_snapshot(log_storage->get_snapshot());
+        commit_index = stat.first;
+        last_applied = stat.first;
+    }
+
+    // persist state
 
     current_term = log_storage->get_term();
     voted_for = log_storage->get_voted();
@@ -328,8 +334,10 @@ auto RaftNode<StateMachine, Command>::save_snapshot() -> bool
         return false;
     int applied_idx = last_applied;
     int applied_term = log_storage->get_log_stat(applied_idx).second;
+    // RAFT_LOG("saving snapshot idx: %d, term: %d", applied_idx, applied_term);
     auto snapshot = state->snapshot();
     log_storage->save_snapshot(snapshot, applied_idx, applied_term);
+    // RAFT_LOG("saved snapshot");
     return true;
 }
 
@@ -520,7 +528,18 @@ void RaftNode<StateMachine, Command>::handle_append_entries_reply(int node_id, c
         }
 
     } else {
-        --next_index[node_id];
+        auto sn_stat = log_storage->get_snapshot_stat();
+        if (sn_stat.first > 0 && next_index[node_id] - 1 == sn_stat.first) {
+            InstallSnapshotArgs args;
+            args.term = current_term;
+            args.leader_id = my_id;
+            args.last_included_index = sn_stat.first;
+            args.last_included_term = sn_stat.second;
+            args.data = log_storage->get_snapshot();
+            if (rpc_clients_map[node_id] != nullptr)
+                thread_pool->enqueue(&RaftNode::send_install_snapshot, this, node_id, args);
+        } else
+            --next_index[node_id];
     }
     return;
 }
@@ -530,7 +549,29 @@ template <typename StateMachine, typename Command>
 auto RaftNode<StateMachine, Command>::install_snapshot(InstallSnapshotArgs args) -> InstallSnapshotReply
 {
     /* Lab3: Your code here */
-    return InstallSnapshotReply();
+
+    std::unique_lock<std::mutex> lock(mtx);
+    InstallSnapshotReply reply;
+    if (args.term < current_term) {
+        reply.term = current_term;
+        return reply;
+    }
+    if (args.term > current_term) {
+        current_term = args.term;
+        log_storage->set_term(current_term);
+        leader_id = args.leader_id;
+        role = RaftRole::Follower;
+    }
+    RAFT_LOG("received IS idx: %d, tm: %d", args.last_included_index, args.last_included_term);
+    reply.term = current_term;
+    log_storage->save_snapshot(args.data, args.last_included_index, args.last_included_term);
+    if (commit_index < args.last_included_index)
+        commit_index = args.last_included_index;
+    if (last_applied < args.last_included_index) {
+        state->apply_snapshot(args.data);
+        last_applied = args.last_included_index;
+    }
+    return reply;
 }
 
 
@@ -538,6 +579,15 @@ template <typename StateMachine, typename Command>
 void RaftNode<StateMachine, Command>::handle_install_snapshot_reply(int node_id, const InstallSnapshotArgs arg, const InstallSnapshotReply reply)
 {
     /* Lab3: Your code here */
+
+    std::unique_lock<std::mutex> lock(mtx);
+    if (reply.term > current_term) {
+        current_term = reply.term;
+        log_storage->set_term(current_term);
+        role = RaftRole::Follower;
+        return;
+    }
+    match_index[node_id] = std::max(arg.last_included_index, match_index[node_id]);
     return;
 }
 

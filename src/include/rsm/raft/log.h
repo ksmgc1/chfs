@@ -39,8 +39,8 @@ public:
     void set_voted(int voted_for);
 
     void save_snapshot(std::vector<u8> data, int last_index, int last_term);
-
-    bool has_snapshot();
+    // index, term
+    std::pair<int, int> get_snapshot_stat();
 
     std::vector<u8> get_snapshot();
 
@@ -279,7 +279,7 @@ void RaftLog<Command>::save_snapshot(std::vector<u8> data, int last_index, int l
     storage_state.last_included_term = last_term;
     storage_state.log_size = std::max(last_index, storage_state.log_size);
     flush_state();
-    for (auto it = log_map.begin(); it->first <= last_index;) {
+    for (auto it = log_map.begin(); it != log_map.end() && it->first <= last_index;) {
         log_map.erase(it++);
     }
     cur_block_id = sn_block_id;
@@ -290,9 +290,9 @@ void RaftLog<Command>::save_snapshot(std::vector<u8> data, int last_index, int l
 }
 
 template <typename Command>
-bool RaftLog<Command>::has_snapshot() {
+std::pair<int, int> RaftLog<Command>::get_snapshot_stat() {
     std::unique_lock<std::mutex> lock(mtx);
-    return storage_state.last_included_index > 0;
+    return {storage_state.last_included_index, storage_state.last_included_term};
 }
 
 template <typename Command>
