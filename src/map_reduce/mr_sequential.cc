@@ -35,19 +35,23 @@ namespace mapReduce {
             auto file_attr = chfs_client->get_type_attr(inode_id).unwrap();
             auto read_res = chfs_client->read_file(inode_id, 0, file_attr.second.size).unwrap();
             auto data = std::string(read_res.begin(), read_res.end());
-            all_mapped.emplace_back(Map(data));
+            auto map_res = Map(data);
+            all_mapped.push_back(map_res);
         }
         std::map<std::string, std::vector<std::string>> map_res;
-        for (auto &&i : all_mapped)
-            for (auto &&j : i)
-                map_res[j.key].emplace_back(j.val);
+        for (auto i : all_mapped)
+            for (auto j : i)
+                map_res[j.key].push_back(j.val);
+        for (auto &i : map_res)
+            std::sort(i.second.begin(), i.second.end());
         std::map<std::string, std::string> reduce_res;
-        for (auto &&key_vals : map_res)
-            reduce_res[key_vals.first] = Reduce(key_vals.first, key_vals.second);
-
+        for (auto key_vals : map_res) {
+            auto reduce_r = Reduce(key_vals.first, key_vals.second);
+            reduce_res[key_vals.first] = reduce_r;
+        }
         std::stringstream ss;
-        for (auto &&kv : reduce_res)
-            ss << kv.first << " " << kv.second << std::endl;
+        for (auto kv : reduce_res)
+            ss << kv.first << ' ' << kv.second << std::endl;
         auto res = ss.str();
         std::vector<chfs::u8> output_data(res.begin(), res.end());
         chfs::inode_id_t output_id;

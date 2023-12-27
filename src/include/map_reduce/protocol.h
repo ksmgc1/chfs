@@ -54,7 +54,7 @@ namespace mapReduce {
     class Coordinator {
     public:
         Coordinator(MR_CoordinatorConfig config, const std::vector<std::string> &files, int nReduce);
-        std::tuple<int, int> askTask(int);
+        std::tuple<int, int, std::string, int, int> askTask(int);
         int submitTask(int taskType, int index);
         bool Done();
 
@@ -63,6 +63,20 @@ namespace mapReduce {
         std::mutex mtx;
         bool isFinished;
         std::unique_ptr<chfs::RpcServer> rpc_server;
+        // map id, has distributed, has done
+        std::map<int, std::pair<bool, bool>> mapJob;
+        bool mapFinished;
+        // reduce id, start map id, file num, has distributed, has done;
+        std::map<int, std::tuple<int, int, bool, bool>> reduceJob;
+        bool reduceFinished;
+        bool lastReduceDistributed;
+
+        /*
+         * 1. mapId == idx in files vector
+         * 2. use reduce num - 1 distributed reduce and one more reduce
+         * 3. ask task: return (job type, job id, filename(map only), start map id(reduce only), file num(recuce only))
+         * 4. mapped file saved to mr-[map id].txt
+         */
     };
 
     class Worker {
@@ -73,7 +87,7 @@ namespace mapReduce {
 
     private:
         void doMap(int index, const std::string &filename);
-        void doReduce(int index, int nfiles);
+        void doReduce(int index, int firstFile, int nfiles);
         void doSubmit(mr_tasktype taskType, int index);
 
         std::string outPutFile;
