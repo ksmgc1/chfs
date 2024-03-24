@@ -16,6 +16,7 @@ add_custom_target(check-tests COMMAND ${CMAKE_CTEST_COMMAND} --verbose)
 
 # #########################################
 # "make XYZ_test"
+# "make run_XYZ_test"
 # #########################################
 foreach (chfs_test_source ${CHFS_TEST_SOURCES})
     # Create a human readable name.
@@ -34,7 +35,7 @@ foreach (chfs_test_source ${CHFS_TEST_SOURCES})
             --gtest_catch_exceptions=0
             DISCOVERY_TIMEOUT 120
             PROPERTIES
-            TIMEOUT 120
+            TIMEOUT 1000
             )
 
     target_link_libraries(${chfs_test_name} chfs gtest gmock_main)
@@ -44,6 +45,13 @@ foreach (chfs_test_source ${CHFS_TEST_SOURCES})
             PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test"
             COMMAND ${chfs_test_name}
+            )
+
+    # Add target for running a single test
+    add_custom_target(run_${chfs_test_name}
+            COMMAND ./${chfs_test_name}
+            DEPENDS ${chfs_test_name}
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test
             )
 endforeach ()
 

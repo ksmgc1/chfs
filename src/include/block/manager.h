@@ -37,6 +37,12 @@ protected:
   u8 *block_data;
   usize block_cnt;
   bool in_memory; // whether we use in-memory to emulate the block manager
+  bool maybe_failed;
+  usize write_fail_cnt;
+  usize not_log_block_cnt;  // I must add this for log implementation
+  std::vector<std::pair<block_id_t, std::vector<u8>>> ops_storage;
+private:
+  bool is_log_enabled = false;
 
 public:
   /**
@@ -64,6 +70,16 @@ public:
    */
   BlockManager(usize block_count, usize block_size);
 
+  /**
+   * Creates a new block manager that writes to a file-backed block device.
+   * It reserves some blocks for recording logs.
+   * 
+   * @param block_file the file name of the  file to write to
+   * @param block_cnt the number of blocks in the device
+   * @param is_log_enabled whether to enable log
+   */
+  BlockManager(const std::string &file, usize block_cnt, bool is_log_enabled);
+
   virtual ~BlockManager();
 
   /**
@@ -75,11 +91,16 @@ public:
   virtual auto write_block(block_id_t block_id, const u8 *block_data)
       -> ChfsNullResult;
 
+  auto true_write_block(block_id_t block_id, const u8 *block_data, bool may_failed) -> ChfsNullResult;
+
   /**
    * Write a partial block to the internal block device.
    */
   virtual auto write_partial_block(block_id_t block_id, const u8 *block_data,
                                    usize offset, usize len) -> ChfsNullResult;
+
+  auto true_write_partial_block(block_id_t block_id, const u8 *block_data,
+                                   usize offset, usize len, bool may_failed) -> ChfsNullResult;
 
   /**
    * Read a block to the internal block device.
@@ -95,6 +116,8 @@ public:
    */
   virtual auto zero_block(block_id_t block_id) -> ChfsNullResult;
 
+  auto true_zero_block(block_id_t block_id) -> ChfsNullResult;
+
   auto total_storage_sz() const -> usize {
     return this->block_cnt * this->block_sz;
   }
@@ -102,7 +125,10 @@ public:
   /**
    * Get the total number of blocks in the block manager
    */
-  auto total_blocks() const -> usize { return this->block_cnt; }
+  auto total_blocks() const -> usize { 
+    // return this->block_cnt; 
+    return this->not_log_block_cnt; // the block size showed to above layer
+  }
 
   /**
    * Get the block size of the device managed by the manager
@@ -113,6 +139,42 @@ public:
    * Get the block data pointer of the manager
    */
   auto unsafe_get_block_ptr() const -> u8 * { return this->block_data; }
+
+  /**
+   * flush the data of a block into disk
+   */
+  auto sync(block_id_t block_id) -> ChfsNullResult;
+
+  /**
+   * Flush the page cache
+   */
+  auto flush() -> ChfsNullResult;
+
+  /**
+   * Mark the block manager as may fail state
+   */
+  auto set_may_fail(bool may_fail) -> void {
+    this->maybe_failed = may_fail;
+  }
+
+  auto get_ops() -> std::vector<std::pair<block_id_t, std::vector<u8>>> { return this->ops_storage; }
+
+  auto write_and_clear_ops() -> ChfsNullResult { 
+    for (auto i = ops_storage.begin(); i != ops_storage.end(); ++i) {
+      // std::cout << "writing block " << i->first << std::endl;
+      auto write_res = true_write_block(i->first, i->second.data(), this->maybe_failed);
+      if (write_res.is_err()) {
+        this->ops_storage.clear();
+        return write_res.unwrap_error();
+      }
+    }
+    this->ops_storage.clear();
+    return KNullOk;
+  }
+
+  auto clear_ops() -> void { this->ops_storage.clear(); }
+
+  auto set_log_enabled(bool enabled) -> void { this->is_log_enabled = enabled; }
 };
 
 /**
